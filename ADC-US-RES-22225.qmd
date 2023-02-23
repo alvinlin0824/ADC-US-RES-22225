@@ -1,0 +1,634 @@
+---
+title: "ADC-US-RES-22225 `r params$title2`"
+author: "Alvin, Lin"
+date: "`r Sys.Date()`"
+format:
+   html:
+     theme: flatly
+     self-contained: true
+toc: true
+toc-depth: 3
+toc-location: left
+execute:
+  echo: false
+  warning: false 
+column: body-outset
+params:
+    upload: FALSE
+    plot: TRUE
+    type : "904"
+    analysis: FALSE
+    title1: "Upload Quality"
+    title2: "Profile Plot"
+    title3: "Accuracy Performance"
+---
+
+<!-- AUU \\wf00168p.oneabbott.com\data1\CDM\ADC-US-RES-22225\SE07_08_Glu\UploadData\AUU\AUU_Datafiles -->
+
+<!-- EDC \\wf00168p.oneabbott.com\data1\CDM\ADC-US-RES-22225\SE07_08_Glu\OpenClinica\Current -->
+
+```{r}
+#| label: Libaray Packages 
+#| message: false
+library(magrittr)
+library(plyr)
+library(tidyverse)
+library(fs)
+library(vroom)
+library(lubridate)
+library(htmltools)
+library(reactable)
+library(highcharter)
+library(haven)
+library(gt)
+```
+
+```{r}
+#| label: Find all events and gluc files csv
+file_list <- dir_ls(gsub("\\\\", "/", r"(\\wf00168p.oneabbott.com\data1\CDM\ADC-US-RES-22225\SE07_08_Glu\UploadData\AUU\AUU_Datafiles)"),recurse = T,glob = "*events.csv|*gluc.csv|*freestyle.csv")
+```
+
+```{r}
+#| label: Filter all and find events 
+events_path <- file_list[!str_detect(file_list,"Transfers|FV_Do Not Use") & str_detect(file_list,"events")]
+```
+
+```{r}
+#| label: Filter all and find gluc
+gluc_path <- file_list[!str_detect(file_list,"Transfers|FV_Do Not Use") & str_detect(file_list,"gluc")]
+```
+
+```{r}
+#| label: Filter freestyle
+free_path <- file_list[!str_detect(file_list,"Transfers|FV_Do Not Use") & str_detect(file_list,"freestyle")]
+```
+
+```{r}
+# de <- read_sas(gsub("\\\\", "/", r"(\\wf00168p.oneabbott.com\data1\CDM\ADC-US-RES-22225\SE07_08_Glu\OpenClinica\Current\de.sas7bdat)")) %>%  
+#   filter(!str_detect(DEYN01,regex("CHECK HERE IF NO DATA RECORDED|no_data_recorded",ignore_case = T))) %>%
+#   mutate(Subject = as.character(Subject)) %>%
+#   arrange(Subject)
+```
+
+```{r}
+# pd <- read_sas(gsub("\\\\", "/", r"(\\wf00168p.oneabbott.com\data1\CDM\ADC-US-RES-22225\SE07_08_Glu\OpenClinica\Current\pd.sas7bdat)")) %>%   
+#   filter(!str_detect(DVYN,regex("CHECK HERE IF NO DATA RECORDED|no_data_recorded",ignore_case = T))) %>%
+#   mutate(Subject = as.character(Subject)) %>%
+#   arrange(Subject)
+```
+
+```{r eval = params$upload}
+Upload_fun <- function(upload,n,count,...){
+  ## Counts
+  if (count == T){
+    tibble(`Subject ID` = str_extract(events_path,regex("(?<=Apol0).{6}|(?<=Atna0).{6}",ignore_case = T)),
+           `Condition ID` = str_extract(events_path,regex("(?<=_{7}).{3}",ignore_case = T)),
+           Path = gsub("/","\\\\",str_remove(events_path,regex("(?<=/[:digit:]{9}).++")))) %>% 
+           count(`Subject ID`,Path,name = "N") %>% 
+           # Add parameters
+           filter(N != n) %>%
+   reactable(defaultColDef = colDef(align = "center"), wrap = TRUE, striped = TRUE, resizable = TRUE,
+    columns = list(Path = colDef(cell = function(value) {
+      htmltools::tags$a(href = value, target = "_blank", value)
+    }
+      )
+    )
+  )
+  } else {
+     ## Empty
+  data <- vector("list",length(upload))
+for (i in 1:length(upload)) {
+   data[[i]] <- vroom(upload[i],delim = ",",col_names = T,show_col_types = F,col_select = `Unique Record ID`)  
+}
+  
+  tibble(Path = gsub("/","\\\\",upload[map_dbl(data,nrow) == 2])) %>%
+       mutate(`Subject ID` = str_extract(Path,regex("(?<=Apol0).{6}||(?<=Atna0).{6}",ignore_case = T)),
+              `Condition ID` = str_extract(Path,regex("(?<=_{7}).{3}",ignore_case = T)),
+              `Reader Serial Number` = map_chr(data[map_dbl(data,nrow) == 2], ~ str_extract(.x[2,1],regex("(?<=\\s).{13}",ignore_case = T)))) %>%
+       left_join(de %>%
+                 select(Subject,DESPID01,DETXT02,DEORES02) %>%
+                 mutate(DESPID01 = str_to_upper(DESPID01),
+                 DETXT02 = str_replace_all(DETXT02,"\"","")) %>%
+                 group_by(Subject,DESPID01) %>%
+                 summarise_all(funs(str_c(., collapse = ". "))) %>% 
+                 mutate(`Message from DIR` = str_c(DETXT02,DEORES02,sep = ". "),
+                `Message from DIR` = str_to_sentence(
+                 case_when(
+                str_starts(`Message from DIR`,"\\.") ~ str_extract(`Message from DIR`,"(?<=[:space:])[:alpha:].+"),
+            TRUE ~ `Message from DIR`
+          )),
+          DEORES02 = NULL,
+          DETXT02 = NULL
+                       ),by = c("Subject ID" = "Subject","Reader Serial Number" = "DESPID01")) %>%
+       left_join(pd %>% 
+                 select(Subject,DVDESC1) %>% 
+                 group_by(Subject) %>% 
+                 summarise_all(funs(str_c(., collapse = ' '))) %>%
+                 mutate(`Message from PD` = str_to_sentence(DVDESC1),
+                        DVDESC1 = NULL),
+                 by = c("Subject ID" = "Subject")
+                 ) %>%  
+       relocate(`Subject ID`,`Condition ID`) %>%  
+  reactable(defaultColDef = colDef(align = "center"), wrap = TRUE, striped = TRUE, resizable = TRUE,
+    columns = list(Path = colDef(cell = function(value) {
+      htmltools::tags$a(href = value, target = "_blank", value)
+    }
+      )
+    )
+  )
+  }
+}
+```
+
+`r if(params$upload){knitr::asis_output("# **Count of Upload**")}`
+```{r eval = params$upload}
+#| warning: false
+#| column: page
+Upload_fun(upload = events_path,n = 4,count = T)
+```
+
+```{r eval = params$upload}
+knitr::knit_exit()
+```
+
+```{r}
+#| warning: false
+Apol_fun <- function(index, ...){
+    # Read Events csv
+    events <- vroom(events_path[index],delim = ",",col_names = T,show_col_types = F,col_types = c(`Col 9` = "c"),col_select = c(Date,Time,Type,`Col 9`))
+    # Read Gluc csv
+    gluc <- vroom(gluc_path[index],delim = ",",col_names = T,show_col_types = F,col_types = c(Type = "c"),col_select = c(`Unique Record ID`,Date,Time,Type,Gl))
+    
+    if (nrow(events) == 2 && nrow(gluc) == 2) {tibble()}
+    else {
+          # Time is NA with vroom function
+          if (sum(is.na(gluc$Time)) > 2) {
+          gluc <- vroom(gluc_path[index],delim = ",",col_names = T,show_col_types = F,col_types = c(Type = "c"),col_select = c(`Unique Record ID`,Date,Time,Type,Gl),n_max = 2) %>%
+   bind_rows(data.table::fread(gluc_path[index],skip = 2,select = c(1:5),col.names = c("Unique Record ID","Date","Time","Type","Gl"),colClasses = c("V2" = "Date","V4" = "character")))
+          }
+      
+          events <- events %>%
+                    filter(Type == "SENSOR_STARTED (58)") %>%
+                    transmute(
+                            `Date Time` = ymd_hms(str_c(ymd(Date),hms::as_hms(Time),sep = " ")),
+                             Type = Type,
+                            `Sensor Serial Number` = `Col 9`
+                              ) %>%
+                # Consider Replaced Sensors
+                slice_max(`Date Time`,n = 1)
+          
+          ## Extract Subject ID, Condition ID, Reader ID.
+      gluc <- gluc %>%
+              transmute(`Subject ID` = case_when(
+              str_extract(gluc[1,1],regex("(?<=Site ID = ).{3}",ignore_case = T)) == "ADC" ~ str_extract(gluc[1,1],regex("(?<=Subject ID = ).{4}",ignore_case = T)),
+                        TRUE ~ str_c(str_extract(gluc[1,1],regex("(?<=Site ID = 0).{2}",ignore_case = T)),str_extract(gluc[1,1],regex("(?<=Subject ID = ).{4}",ignore_case = T)))),
+                   `Condition ID` = str_extract(gluc[1,1],regex("(?<=Condition ID = ).{3}",ignore_case = T)),
+                  `Reader ID` = str_extract(gluc[2,1],regex("(?<=\\s).{13}",ignore_case = T)),
+                  `Date Time` = ymd_hms(str_c(ymd(Date),hms::as_hms(Time),sep = " ")),
+                         Type = Type,
+                           Gl = Gl) %>%
+                   slice(3:n())
+          ## Bind rows Events with Gluc
+          events %>%
+            bind_rows(gluc) %>%
+            fill(c(`Subject ID`,`Condition ID`,`Reader ID`),.direction = "up") %>%
+            fill(`Sensor Serial Number`,.direction = "down") %>%
+            relocate(`Subject ID`,`Condition ID`,`Sensor Serial Number`,
+                     `Reader ID`,`Date Time`,Type,Gl)
+  }
+}
+```
+
+```{r}
+#| warning: false
+UUU <- vector("list",length(events_path))
+for (i in seq_along(events_path)) {
+  UUU[[i]] <- Apol_fun(index = i)
+}
+```
+
+```{r}
+#| label: empty gluc.csv
+# tibble(Path = gsub("/","\\\\",gluc_path[which(map_dbl(UUU,nrow) == 1)])) %>% 
+#      reactable(defaultColDef = colDef(align = "center"), wrap = TRUE, striped = TRUE, resizable = TRUE,
+#     columns = list(Path = colDef(cell = function(value) {
+#       htmltools::tags$a(href = value, target = "_blank", value)
+#     }
+#       )
+#     )  )
+```
+
+```{r}
+UUU <- UUU %>% 
+       bind_rows() %>% 
+       # Remove Duplicated Uploads
+       distinct()
+```
+
+<!-- Delete Code -->
+
+```{r}
+# sa <- read_sas(gsub("\\\\", "/", r"(\\wf00168p.oneabbott.com\data1\CDM\ADC-US-RES-22225\SE07_08_Glu\OpenClinica\Current\sa.sas7bdat)"))
+```
+
+```{r}
+# sa <- sa %>% 
+#       filter(!str_detect(DUYN01,regex("CHECK HERE IF NO DATA RECORDED",ignore_case = T))) %>%
+#       select(Subject,DUSEQ01,DUCOD01,DUORES06) %>% 
+#       mutate(Subject = as.character(Subject)) %>%
+#       arrange(Subject) 
+```
+
+```{r}
+# UUU %>% 
+#     distinct(across(`Subject ID`:`Sensor Serial Number`)) %>%
+#     full_join(sa,by = c("Subject ID" = "Subject", "Condition ID" = "DUCOD01")) %>% 
+#     mutate(`Study Event` = case_when(str_starts(`Subject ID`,"57") ~ "225 SE07",
+#                                      TRUE ~ "225 SE08")) %>% 
+#     relocate(`Study Event`) %>%
+#     rename(`Sensor Number` = DUSEQ01, `Was the sensor functional?` = DUORES06) %>% 
+#     arrange(`Subject ID`) %>% 
+#     vroom_write(gsub("\\\\", "/", r"(C:\Project\ADC-US-RES-22225\Data.csv)"),delim = ",")
+```
+<!-- Delete Code -->
+
+```{r}
+#| warning: false
+# Apol
+freestyle <- map(free_path,vroom,delim = ",",col_names = T,show_col_types = F,col_select = c(`Unique Record ID`,Date,Time,`FreeStyle Reading`)) %>% 
+   map(
+ ~ transmute(.x,`Subject ID` = case_when(
+              str_extract(.[1,1],regex("(?<=Site ID = ).{3}",ignore_case = T)) == "ADC" ~ str_extract(.[1,1],regex("(?<=Subject ID = ).{4}",ignore_case = T)),
+                        TRUE ~ str_c(str_extract(.[1,1],regex("(?<=Site ID = 0).{2}",ignore_case = T)),str_extract(.[1,1],regex("(?<=Subject ID = ).{4}",ignore_case = T)))),
+             `BG Date Time` = ymd_hms(str_c(ymd(Date),hms::as_hms(Time),sep = " ")),
+           `FreeStyle Reading` = `FreeStyle Reading`
+          )) %>% 
+   map(~ filter(.x,!is.na(`BG Date Time`))) %>% 
+   bind_rows() %>% 
+   # Remove Duplicated Uploads
+   distinct() %>% 
+   arrange(`Subject ID`,`BG Date Time`)
+```
+
+`r if(params$plot){knitr::asis_output("# **Summary Table**")}`
+```{r eval = params$plot}
+#| column: body-outset
+UUU %>% 
+    group_by(`Site ID` = str_c("0",str_sub(`Subject ID`,1,2))) %>% 
+    summarise(`Number of Subject` = n_distinct(`Subject ID`),
+              `Number of Sensors` = n_distinct(`Subject ID`,`Condition ID`)) %>% 
+    gt() %>%
+    cols_align(align = "center")
+```
+
+```{r eval = params$plot}
+my_plot <- function(Id, type, ...) {
+  highchart() %>%
+  # Add title
+  {if (type == "904") hc_title(.,text = str_c("Subject = ",Id, " Real-Time Glucose")) 
+   else if (type == "905") hc_title(.,text = str_c("Subject = ",Id, " Historic Glucose")) 
+   else hc_title(.,text = str_c("Subject = ",Id, " Current Glucose"))} %>% 
+  # hc_title(text = str_c("Subject = ",Id)) %>% 
+  # continuous Sensor Data
+  hc_add_series(
+    # name = "Sensor Reading",
+    data = UUU %>%
+           filter(`Subject ID` == Id, Type == type) %>% 
+           # 904 is Real-time glucose 906 is current glucose
+           mutate(Type = case_when(Type == "906" ~ "Current Glucose",
+                                   Type == "904" ~ "Real-Time Glucose",
+                                   TRUE ~ "Historic Glucose")),
+    type = "line",
+    hcaes(x = datetime_to_timestamp(`Date Time`), y = Gl, group = `Condition ID`)) %>%
+  # BG data 
+   hc_add_series(
+    name = "BG Reference",
+    data = freestyle %>%
+           filter(`Subject ID` == Id),
+    type = "scatter",
+    color = "#FF0000",
+    hcaes(x = datetime_to_timestamp(`BG Date Time`), y = `FreeStyle Reading`)) %>% 
+    # Add X label
+    hc_xAxis(title = list(text = "Date Time"),
+             type = "datetime", 
+             dateTimeLabelFormats = list(day = '%d %b %y')) %>%
+    # Add Y axis
+    hc_yAxis(title = list(text = "Glucose(mg/dl)")) %>%
+    # Change the size of marker
+    hc_plotOptions(scatter = list(
+                            marker = list(radius = 1.9, symbol = "circle"))) %>% 
+    # Change the format of point
+    hc_tooltip(pointFormat = '{point.x: %Y-%m-%d %H:%M:%S} {point.y:.1f} ')  %>% 
+    # Add zoom in function
+    hc_chart(zoomType = "xy") %>% 
+    # Add navigator
+    hc_navigator(enabled = TRUE)
+    # {if (UUU %>%
+    #      filter(Type != "SENSOR_STARTED (58)") %>%
+    #      filter(`Subject ID` == Id) %>% 
+    #      nrow() != 0) 
+    #      hc_navigator(.,enabled = TRUE) else .}  %>%
+    # {if (UUU %>%
+    #      filter(Type != "SENSOR_STARTED (58)") %>%
+    #      filter(`Subject ID` == Id) %>% 
+    #      nrow() == 0) 
+    #      hc_navigator(.,enabled = TRUE,series = list(color = "white")) else .} 
+}
+```
+
+```{r}
+# my_plot(Id = "810011", type = "904")
+```
+
+```{r eval = params$plot}
+#| label: Distinct Subject ID
+UD <- UUU %>% 
+      distinct(`Subject ID`) %>% 
+      pull()
+```
+
+```{r eval = params$plot}
+#| label: For Loop Plots
+plots <- list()
+for (i in seq_along(UD)){
+  plots[[i]] <- my_plot(Id = UD[i],type = params$type)
+}
+htmltools::tagList(plots)
+```
+
+`r if(params$analysis){knitr::asis_output("# **Difference Measures**")}`
+```{r eval = params$analysis}
+PAIR_fun <- function(data){
+  # BG Strips Data
+  freestyle %>%
+     # Remove Extreme Reference readings <20 or >500
+     filter(between(`FreeStyle Reading`,20,500)) %>% 
+     # mutate(across(where(is.POSIXct), ~ ymd_hms(.x,tz = "US/Pacific"))) %>%
+     full_join(
+               # Sensor Data
+               data %>%
+                mutate(
+                  `Lower Bound` = case_when(Type %in% c("904","906") ~ `Date Time` - dminutes(5),
+                                              TRUE ~ `Date Time` - dminutes(8)),
+                  `Upper Bound` = case_when(Type %in% c("904","906") ~ `Date Time` + dminutes(5),
+                                              TRUE ~ `Date Time` + dminutes(8))
+                     ),
+                     by = c("Subject ID")
+                     )  %>% 
+      filter(`BG Date Time` >= `Lower Bound`,`BG Date Time` <= `Upper Bound`) %>% 
+      # Select the nearest time
+      group_by(`Subject ID`,`BG Date Time`) %>%
+      arrange(desc(`Date Time`)) %>%
+      slice_min(abs(`BG Date Time` - `Date Time`),n = 1,with_ties = F) %>%
+      ungroup() %>%
+      # Select the nearest time
+      group_by(`Subject ID`,`Date Time`) %>%
+      arrange(desc(`Date Time`)) %>%
+      slice_min(abs(`BG Date Time` - `Date Time`),n = 1,with_ties = F) %>%
+      ungroup() %>% 
+      select(-c(contains("Bound")))
+}
+```
+
+```{r eval = params$analysis}
+Ap <- UUU %>% 
+      # Current Glucose Only
+      filter(Type == "904") %>%
+      # Remove Extreme Gl readings < 40 or > 400
+      filter(between(Gl,40,400)) %>% 
+      group_split(`Subject ID`,`Condition ID`,Type) %>% 
+      map_dfr(~ PAIR_fun(data = .x)) %>% 
+      # Row-wise Calculation
+      mutate(
+              Bias = Gl - `FreeStyle Reading`,
+            `Percent Bias` = (Bias/`FreeStyle Reading`)*100,
+            `Absolute Bias` = abs(Bias),
+            `Absolute Percent Bias` = abs(`Percent Bias`),
+            `Hybrid Bias` = case_when(`FreeStyle Reading` < 100 ~ Bias,
+                                       TRUE ~ `Percent Bias`)
+             )
+```
+
+```{r eval = params$analysis}
+#| label: Load IH105 Paired Data
+Ap105 <- vroom(gsub("\\\\", "/", r"(\\oneabbott.com\dept\ADC\Technical_OPS\Clinical_Affairs\Clinical Study Files\Sensor Systems\ADC-US-RES-16157_InHouse Sensor\Statistics\Programs\SE105\AL\Data\IH105.csv)"),delim = ",",col_names = T,show_col_types = F,col_types = c(`Subject ID` = "c",Type = "c"))
+```
+
+```{r eval = params$analysis}
+#| label: Bind Rows and arrange data
+Ap <- Ap %>% 
+      bind_rows(Ap105) %>% 
+      mutate(Data = case_when(str_starts(`Subject ID`,"57") ~ "225 SE07",
+                                       str_starts(`Subject ID`,"81") ~ "225 SE08",
+                                       TRUE ~ "IH105"))
+```
+
+```{r eval = params$analysis}
+my_sum <- list(
+  Mean = ~ mean(.x, na.rm = T),
+  Median = ~ median(.x, na.rm = T),
+  SD = ~ sd(.x, na.rm = T)
+)
+```
+
+```{r eval = params$analysis}
+#| label: Table Function
+table_fun <- function(type, ...) {
+   # .data %>%
+   Ap %>%
+   filter(Type %in% type) %>%
+   group_by(...) %>%
+   summarise(
+     across(c(Bias:`Hybrid Bias`), my_sum,.names = "{.col} {.fn}"),
+            N = n()) %>% 
+   relocate(N,.after = last_col()) %>%  
+   gt() %>%
+   cols_align(align = "center") %>%
+   tab_spanner(label = "Bias (mg/dL)",columns = c("Bias Mean","Bias Median","Bias SD")) %>%
+   tab_spanner(label = "% Bias",columns = c("Percent Bias Mean","Percent Bias Median","Percent Bias SD")) %>%
+   tab_spanner(label = "Abs. Bias (mg/dL)",columns = c("Absolute Bias Mean","Absolute Bias Median","Absolute Bias SD")) %>%
+   tab_spanner(label = "MARD(%)",columns = c("Absolute Percent Bias Mean","Absolute Percent Bias Median","Absolute Percent Bias SD")) %>%
+   tab_spanner(label = "Bias (mg/dL or %)",columns = c("Hybrid Bias Mean","Hybrid Bias Median","Hybrid Bias SD")) %>%
+    fmt_number(columns = contains(c("Mean","Median")),decimals = 1) %>%
+    fmt_number(columns = contains(c("SD")),decimals = 2) %>%
+    cols_label(
+      `Bias Mean` = "Mean",`Bias Median` = "Median",`Bias SD` = "SD",
+      `Percent Bias Mean` = "Mean",`Percent Bias Median` = "Median",`Percent Bias SD` = "SD",
+      `Absolute Bias Mean` = "Mean",`Absolute Bias Median` = "Median",
+      `Absolute Bias SD` =  "SD",`Absolute Percent Bias Mean` = "Mean",
+      `Absolute Percent Bias Median` = "Median",
+      `Absolute Percent Bias SD` = "SD",`Hybrid Bias Mean` = "Mean",
+      `Hybrid Bias Median` = "Median",`Hybrid Bias SD` = "SD"
+    )
+}
+```
+
+`r if(params$analysis){knitr::asis_output("## Real Time Difference Measures Group by Study Event and Lot")}`
+```{r eval = params$analysis}
+#| column: page
+table_fun(type = c("904"),Data,str_sub(`Condition ID`,3)) %>% 
+  cols_label("str_sub(`Condition ID`, 3)" = "Lot") 
+```
+
+`r if(params$analysis){knitr::asis_output("## Real Time Difference Measures Group by Lot")}`
+```{r eval = params$analysis}
+#| column: page
+table_fun(type = c("904"),str_sub(`Condition ID`,3)) %>% 
+  cols_label("str_sub(`Condition ID`, 3)" = "Lot") 
+```
+
+`r if(params$analysis){knitr::asis_output("# **System Agreement Analysis**")}`
+```{r eval = params$analysis}
+# my_table <- function(Condition,type,...){
+#   gl_breaks <- c(0,10,15,20,30,40,Inf)
+# Ap %>% 
+#    # Create User-Defined arguments 
+#    filter(Type %in% type, str_sub(`Condition ID`,3) %in% Condition) %>%
+#    mutate(Level = case_when(`FreeStyle Reading` < 70 ~ "<70 mg/dL",
+#                             TRUE ~ ">=70 mg/dL")) %>% 
+#    group_by(Group = case_when(`FreeStyle Reading` < 70 ~ cut(round(`Absolute Bias`,0), breaks = gl_breaks,include.lowest = T),
+#                               TRUE ~ cut(round(`Absolute Percent Bias`,0), breaks = gl_breaks,include.lowest = T))) %>% 
+#    group_by(...) %>% 
+#    ungroup() %>%
+#    group_split(Level) %>%
+#    map(~ count(.x,Group,name = "N",.drop = F)) %>%
+#    map(~ mutate(.x,Sum = sum(N),
+#                    cum = case_when(row_number() %in% c(1:5) ~ cumsum(N),
+#                                    TRUE ~ N),
+#                    Percent = round((cum/Sum)*100,1))) %>%
+#    # Turn implicit factor levels into explicit
+#    map(~ complete(.x,Group)) %>%
+#    map_dfr(~ transmute(.x,`N(%)` = str_c(cum,"/",Sum," ","(",Percent,"%)"))) %>% 
+#    add_column(Group = c("Within +- 10 mg/dL","Within +- 15 mg/dL","Within +- 20 mg/dL","Within +- 30 mg/dL","Within +- 40 mg/dL ","Outside +- 40 mg/dL ","Within +- 10%","Within +- 15%","Within +- 20%","Within +- 30%","Within +- 40% ","Outside +- 40%"),.before = "N(%)") %>% 
+#    bind_rows(
+#      ## Pooled
+#      Ap %>%
+#    # Only Real Time
+#    filter(Type %in% type, str_sub(`Condition ID`,3) %in% Condition) %>%
+#    mutate(Level = case_when(`FreeStyle Reading` < 70 ~ "<70 mg/dL",
+#                             TRUE ~ ">=70 mg/dL")) %>%
+#    group_by(Group = case_when(`FreeStyle Reading` < 70 ~ cut(round(`Absolute Bias`,0), breaks = gl_breaks,include.lowest = T),
+#                               TRUE ~ cut(round(`Absolute Percent Bias`,0), breaks = gl_breaks,include.lowest = T))) %>% 
+#    ungroup() %>%
+#    count(Group,name = "N",.drop = F) %>%
+#    mutate(Sum = sum(N),
+#           cum = case_when(row_number() %in% c(1:5) ~ cumsum(N),
+#                           TRUE ~ N),
+#           Percent = round((cum/Sum)*100,1)) %>%
+#    transmute(`N(%)` = str_c(cum,"/",Sum," ","(",Percent,"%)")) %>%
+#    add_column(Group = c("Within +- 10 mg/dL or 10%","Within +- 15 mg/dL or 15%","Within +- 20 mg/dL or 20%","Within +- 30 mg/dL or 30%","Within +- 40 mg/dL or 40% ","Outside +- 40 mg/dL or 40% "),.before = "N(%)") 
+#    ) %>%  
+#    gt() %>%
+#    cols_align(align = "center") %>%
+#    sub_missing(columns = everything(),missing_text = "") %>%
+#    tab_row_group(label = "Reference Glucose Overall Levels ",rows = 13:18) %>%
+#    tab_row_group(label = "Reference Glucose >= 70 mg/dL ",rows = 7:12) %>%
+#    tab_row_group(label = "Reference Glucose < 70 mg/dL",rows = 1:6) %>%
+#    opt_table_lines() %>%
+#    tab_style(style = list(cell_fill(color = rgb(192,192,192,maxColorValue = 225))),
+#              locations = cells_row_groups()) %>%
+#    tab_header(title = md("Number and Percent of Results within Reference Glucose")) %>% 
+#    as_raw_html()
+# }
+```
+
+`r if(params$analysis){knitr::asis_output("## Real Time System Accuracy Results Group by Study Event and Lot")}`
+```{r eval = params$analysis}
+#| column: screen
+# my_table <- function(type,...) {
+gl_breaks <- c(0,10,15,20,30,40,Inf)
+Ap %>% 
+   # filter(Type %in% type) %>%
+   mutate(Level = case_when(`FreeStyle Reading` < 70 ~ "<70 mg/dL",
+                            TRUE ~ ">=70 mg/dL"),
+          Group = case_when(`FreeStyle Reading` < 70 ~ cut(round(`Absolute Bias`,0), breaks = gl_breaks,include.lowest = T),
+                              TRUE ~ cut(round(`Absolute Percent Bias`,0), breaks = gl_breaks,include.lowest = T)),
+          Lot = str_sub(`Condition ID`,3)) %>% 
+   # group_by(...) %>% 
+   group_by(Data,Level,Lot,Group) %>%
+   summarise(N = n()) %>% 
+   complete(Group,fill = list(N = 0)) %>%
+   mutate(Sum = sum(N),
+          cum = case_when(row_number() %in% c(1:5) ~ cumsum(N),
+                          TRUE ~ N),
+                    Percent = round((cum/Sum)*100,1),
+          Group = c("Within +- 10 mg/dL","Within +- 15 mg/dL","Within +- 20 mg/dL","Within +- 30 mg/dL","Within +- 40 mg/dL ","Outside +- 40 mg/dL"),
+          `N(%)` = str_c(cum,"/",Sum," ","(",Percent,"%)")) %>%
+   ungroup() %>%
+   pivot_wider(id_cols = c(Data,Level,Lot),names_from = Group,values_from = `N(%)`) %>% 
+   gt() %>% 
+   cols_hide(Data) %>% 
+   cols_align(align = "center") %>% 
+     tab_row_group(
+     label = "IH105",
+     rows = c(25:36)) %>% 
+    tab_row_group(
+     label = "225 SE08",
+     rows = c(13:24)) %>% 
+   tab_row_group(
+     label = "225 SE07",
+     rows = c(1:12)) 
+# }
+```
+
+`r if(params$analysis){knitr::asis_output("## Real Time System Accuracy Results Group by Lot")}`
+```{r eval = params$analysis}
+#| column: screen
+# my_table <- function(type,...) {
+gl_breaks <- c(0,10,15,20,30,40,Inf)
+Ap %>% 
+   # filter(Type %in% type) %>%
+   mutate(Level = case_when(`FreeStyle Reading` < 70 ~ "<70 mg/dL",
+                            TRUE ~ ">=70 mg/dL"),
+          Group = case_when(`FreeStyle Reading` < 70 ~ cut(round(`Absolute Bias`,0), breaks = gl_breaks,include.lowest = T),
+                              TRUE ~ cut(round(`Absolute Percent Bias`,0), breaks = gl_breaks,include.lowest = T)),
+          Lot = str_sub(`Condition ID`,3)) %>% 
+   # group_by(...) %>% 
+   group_by(Level,Lot,Group) %>%
+   summarise(N = n()) %>% 
+   complete(Group,fill = list(N = 0)) %>%
+   mutate(Sum = sum(N),
+          cum = case_when(row_number() %in% c(1:5) ~ cumsum(N),
+                          TRUE ~ N),
+                    Percent = round((cum/Sum)*100,1),
+          Group = c("Within +- 10 mg/dL","Within +- 15 mg/dL","Within +- 20 mg/dL","Within +- 30 mg/dL","Within +- 40 mg/dL ","Outside +- 40 mg/dL"),
+          `N(%)` = str_c(cum,"/",Sum," ","(",Percent,"%)")) %>%
+   ungroup() %>%
+   pivot_wider(id_cols = c(Level,Lot),names_from = Group,values_from = `N(%)`) %>% 
+   gt() %>% 
+   cols_align(align = "center") 
+# }
+```
+
+```{r eval = params$analysis}
+#| column: screen
+# my_table(type = c("904"))
+```
+
+```{r}
+# tibble(my_table(type = "904",Condition = c("1")),
+#        my_table(type = "904",Condition = c("2")),
+#        my_table(type = "904",Condition = c("3")),
+#        my_table(type = "904",Condition = c("4")),
+#        my_table(type = "904",Condition = c("5")),
+#        my_table(type = "904",Condition = c("6"))
+#        ) %>% 
+#     gt() %>% 
+#     fmt_markdown(columns = everything()) %>% 
+#     cols_label(`my_table(type = "904", Condition = c("1"))` = "Lot = 1",
+#                `my_table(type = "904", Condition = c("2"))` = "Lot = 2",
+#                `my_table(type = "904", Condition = c("3"))` = "Lot = 3",
+#                `my_table(type = "904", Condition = c("4"))` = "Lot = 4",
+#                `my_table(type = "904", Condition = c("5"))` = "Lot = 5",
+#                `my_table(type = "904", Condition = c("6"))` = "Lot = 6")
+```
+
+`r if(params$analysis){knitr::asis_output("## Real Time System Accuracy Plot")}`
+```{r eval = params$analysis}
+#| column: body-outset
+ggplot(Ap) +
+  geom_point(aes(x = `FreeStyle Reading`, y = Bias, color = str_sub(`Condition ID`,3), shape = str_sub(`Condition ID`,3))) +
+  labs(x = "BG Reference (mg/dL)", y = "Bias (mg/dL)", color = "Lot", shape = "Lot") +
+  theme_bw() +
+  theme(panel.grid.major.y = element_blank(),panel.grid.minor.y = element_blank(),legend.position = "bottom",plot.title = element_text(hjust = 0.5))
+```
