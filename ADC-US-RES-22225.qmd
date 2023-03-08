@@ -381,7 +381,7 @@ PAIRBG_fun <- function(data){
   freestyle %>%
      # Remove Extreme Reference readings <20 or >500
      filter(between(`FreeStyle Reading`,20,500)) %>% 
-     full_join(
+     inner_join(
                # Sensor Data
                data %>%
                 mutate(
@@ -390,10 +390,9 @@ PAIRBG_fun <- function(data){
                   `Upper Bound` = case_when(Type %in% c("904","906") ~ `Date Time` + dminutes(5),
                                             .default = `Date Time` + dminutes(8))
                      ),
-                   by = "Subject ID",
+                   by = join_by("Subject ID",between(`BG Date Time`,`Lower Bound`,`Upper Bound`)),
                    multiple = "all"
-                     ) %>%
-      filter(`BG Date Time` >= `Lower Bound`,`BG Date Time` <= `Upper Bound`) %>% 
+                     ) |> 
       # Select the nearest time
       group_by(`Subject ID`,`BG Date Time`) %>%
       arrange(desc(`Date Time`)) %>%
