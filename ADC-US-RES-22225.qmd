@@ -1,5 +1,5 @@
 ---
-title: "ADC-US-RES-22225 `r params$title2`"
+title: "ADC-US-RES-22225 `r params$title3`"
 author: "Alvin, Lin"
 date: "`r Sys.Date()`"
 format:
@@ -15,10 +15,11 @@ execute:
   keep-md: true
 column: body-outset
 params:
+    load: TRUE
     upload: FALSE
-    plot: TRUE
+    plot: FALSE
     type : "904"
-    analysis: FALSE
+    analysis: TRUE
     title1: "Upload Quality"
     title2: "Profile Plot"
     title3: "Accuracy Performance"
@@ -153,7 +154,7 @@ Upload_fun(upload = events_path,n = 4,count = T)
 knitr::knit_exit()
 ```
 
-```{r}
+```{r eval = !params$load}
 #| label: Apol function
 #| warning: false
 Apol_fun <- function(index, ...){
@@ -202,7 +203,7 @@ Apol_fun <- function(index, ...){
 }
 ```
 
-```{r}
+```{r eval = !params$load}
 #| label: For Loop UUU
 #| warning: false
 UUU <- vector("list",length(events_path))
@@ -222,7 +223,7 @@ for (i in seq_along(events_path)) {
 #     )  )
 ```
 
-```{r}
+```{r eval = !params$load}
 #| label: List Rbind UUU
 UUU <- UUU %>% 
        list_rbind() %>% 
@@ -230,34 +231,18 @@ UUU <- UUU %>%
        distinct()
 ```
 
-<!-- Delete Code -->
-
 ```{r}
-# sa <- read_sas(gsub("\\\\", "/", r"(\\wf00168p.oneabbott.com\data1\CDM\ADC-US-RES-22225\SE07_08_Glu\OpenClinica\Current\sa.sas7bdat)"))
+#| label: Output UUU.rds
+#| eval: false
+# saveRDS(UUU,gsub("\\\\", "/", r"(\\oneabbott.com\dept\ADC\Technical_OPS\Clinical_Affairs\Clinical Study Files\Apollo\ADC-US-RES-22225 Multi-Analyte Studies\Statistics\Programs\SE07_SE08\Data\UUU.rds)"))
 ```
 
-```{r}
-# sa <- sa %>% 
-#       filter(!str_detect(DUYN01,regex("CHECK HERE IF NO DATA RECORDED",ignore_case = T))) %>%
-#       select(Subject,DUSEQ01,DUCOD01,DUORES06) %>% 
-#       mutate(Subject = as.character(Subject)) %>%
-#       arrange(Subject) 
+```{r eval = params$load}
+#| label: Import UUU.rds
+UUU <- readRDS(gsub("\\\\", "/", r"(\\oneabbott.com\dept\ADC\Technical_OPS\Clinical_Affairs\Clinical Study Files\Apollo\ADC-US-RES-22225 Multi-Analyte Studies\Statistics\Programs\SE07_SE08\Data\UUU.rds)"))
 ```
 
-```{r}
-# UUU %>% 
-#     distinct(across(`Subject ID`:`Sensor Serial Number`)) %>%
-#     full_join(sa,by = c("Subject ID" = "Subject", "Condition ID" = "DUCOD01")) %>% 
-#     mutate(`Study Event` = case_when(str_starts(`Subject ID`,"57") ~ "225 SE07",
-#                                      TRUE ~ "225 SE08")) %>% 
-#     relocate(`Study Event`) %>%
-#     rename(`Sensor Number` = DUSEQ01, `Was the sensor functional?` = DUORES06) %>% 
-#     arrange(`Subject ID`) %>% 
-#     vroom_write(gsub("\\\\", "/", r"(C:\Project\ADC-US-RES-22225\Data.csv)"),delim = ",")
-```
-<!-- Delete Code -->
-
-```{r}
+```{r eval = !params$load}
 #| label: Import BG Data
 #| warning: false
 freestyle <- map(free_path,vroom,delim = ",",col_names = T,show_col_types = F,col_select = c(`Unique Record ID`,Date,Time,`FreeStyle Reading`,Status)) %>% 
@@ -270,7 +255,7 @@ freestyle <- map(free_path,vroom,delim = ",",col_names = T,show_col_types = F,co
                         .default = str_c(str_extract(.[1,1],regex("(?<=Site ID = 0).{2}",ignore_case = T)),str_extract(.[1,1],regex("(?<=Subject ID = ).{4}",ignore_case = T)))
               ),
              `BG Date Time` = ymd_hms(str_c(ymd(Date),hms::as_hms(Time),sep = " ")),
-             `FreeStyle Reading` = `FreeStyle Reading`,
+              Reference = `FreeStyle Reading`,
               Status = Status
           )) %>% 
    map(~ filter(.x,!is.na(`BG Date Time`))) %>% 
@@ -278,13 +263,24 @@ freestyle <- map(free_path,vroom,delim = ",",col_names = T,show_col_types = F,co
    # Filter Status == 0
    filter(Status == 0) %>% 
    # Calculate Average freeStyle reading if time stamp are same.
-   mutate(`FreeStyle Reading` = mean(`FreeStyle Reading`),
+   mutate(Reference = mean(Reference),
           .by = c(`Subject ID`,`BG Date Time`)) %>% 
    # Remove Duplicated 
    distinct() %>% 
    # select Useful Columns
    select(-Status) %>% 
    arrange(`Subject ID`,`BG Date Time`)
+```
+
+```{r}
+#| label: Output freestyle.rds
+#| eval: false
+# saveRDS(freestyle,gsub("\\\\", "/", r"(\\oneabbott.com\dept\ADC\Technical_OPS\Clinical_Affairs\Clinical Study Files\Apollo\ADC-US-RES-22225 Multi-Analyte Studies\Statistics\Programs\SE07_SE08\Data\freestyle.rds)"))
+```
+
+```{r eval = params$load}
+#| label: Import freestyle.rds
+freestyle <- readRDS(gsub("\\\\", "/", r"(\\oneabbott.com\dept\ADC\Technical_OPS\Clinical_Affairs\Clinical Study Files\Apollo\ADC-US-RES-22225 Multi-Analyte Studies\Statistics\Programs\SE07_SE08\Data\freestyle.rds)"))
 ```
 
 `r if(params$plot){knitr::asis_output("# **Summary Table**")}`
@@ -300,7 +296,7 @@ UUU %>%
 
 ```{r eval = params$plot}
 #| label: Profile plot function
-my_plot <- function(Id, type, ...) {
+breakdown_type_plot <- function(Id, type, ...) {
   highchart() %>%
   # Add title
   {if (type == "904") hc_title(.,text = str_c("Subject = ",Id, " Real-Time Glucose")) 
@@ -325,7 +321,7 @@ my_plot <- function(Id, type, ...) {
            filter(`Subject ID` == Id),
     type = "scatter",
     color = "#FF0000",
-    hcaes(x = datetime_to_timestamp(`BG Date Time`), y = `FreeStyle Reading`)) %>% 
+    hcaes(x = datetime_to_timestamp(`BG Date Time`), y = Reference)) %>% 
     # Add X label
     hc_xAxis(title = list(text = "Date Time"),
              type = "datetime", 
@@ -355,7 +351,7 @@ my_plot <- function(Id, type, ...) {
 ```
 
 ```{r}
-# my_plot(Id = "810011", type = "904")
+# breakdown_type_plot(Id = "810011", type = "904")
 ```
 
 ```{r eval = params$plot}
@@ -369,7 +365,7 @@ UD <- UUU %>%
 #| label: For Loop Plots
 plots <- list()
 for (i in seq_along(UD)){
-  plots[[i]] <- my_plot(Id = UD[i],type = params$type)
+  plots[[i]] <- breakdown_type_plot(Id = UD[i],type = params$type)
 }
 htmltools::tagList(plots)
 ```
@@ -380,7 +376,7 @@ PAIRBG_fun <- function(data){
   # BG Strips Data
   freestyle %>%
      # Remove Extreme Reference readings <20 or >500
-     filter(between(`FreeStyle Reading`,20,500)) %>% 
+     filter(between(Reference,20,500)) %>% 
      inner_join(
                # Sensor Data
                data %>%
@@ -392,7 +388,7 @@ PAIRBG_fun <- function(data){
                      ),
                    by = join_by("Subject ID",between(`BG Date Time`,`Lower Bound`,`Upper Bound`)),
                    multiple = "all"
-                     ) |> 
+                     ) %>% 
       # Select the nearest time
       group_by(`Subject ID`,`BG Date Time`) %>%
       arrange(desc(`Date Time`)) %>%
@@ -407,7 +403,7 @@ PAIRBG_fun <- function(data){
 }
 ```
 
-```{r eval = params$analysis}
+```{r eval = !params$load}
 #| label: Paired Data
 Ap <- UUU %>% 
       # Current Glucose Only
@@ -423,14 +419,25 @@ Ap <- UUU %>%
       # Row-wise Calculation
       mutate(
             # Reference glucose values < 100 mg/dL
-            `Difference(mg/dL)` = Gl - `FreeStyle Reading`,
+            `Difference(mg/dL)` = Gl - Reference,
             `Absolute Difference(mg/dL)` = abs(`Difference(mg/dL)`),
             # Reference glucose values >= 100 mg/dL
-            `Relative Difference(%)` = (`Difference(mg/dL)`/`FreeStyle Reading`)*100,
-            `Absolute Relative Difference(%)` = abs(`Relative Difference(%)`),
-            `Hybrid Bias` = case_when(`FreeStyle Reading` < 100 ~ `Difference(mg/dL)`,
-                                       .default = `Relative Difference(%)`)
+            `Relative Difference(%)` = (`Difference(mg/dL)`/Reference)*100,
+            `Absolute Relative Difference(%)` = abs(`Relative Difference(%)`)
+            # `Hybrid Bias` = case_when(`FreeStyle Reading` < 100 ~ `Difference(mg/dL)`,
+            #                            .default = `Relative Difference(%)`)
              )
+```
+
+```{r}
+#| label: Output Ap.rds
+#| eval: false
+# saveRDS(Ap,gsub("\\\\", "/", r"(\\oneabbott.com\dept\ADC\Technical_OPS\Clinical_Affairs\Clinical Study Files\Apollo\ADC-US-RES-22225 Multi-Analyte Studies\Statistics\Programs\SE07_SE08\Data\Ap.rds)"))
+```
+
+```{r eval = params$load}
+#| label: Import Ap.rds
+Ap <- readRDS(gsub("\\\\", "/", r"(\\oneabbott.com\dept\ADC\Technical_OPS\Clinical_Affairs\Clinical Study Files\Apollo\ADC-US-RES-22225 Multi-Analyte Studies\Statistics\Programs\SE07_SE08\Data\Ap.rds)"))
 ```
 
 ```{r}
@@ -439,8 +446,12 @@ Ap <- UUU %>%
 
 ```{r eval = params$analysis}
 #| label: Import IH105 Paired Data
-Ap105 <- open_dataset(gsub("\\\\", "/", r"(\\oneabbott.com\dept\ADC\Technical_OPS\Clinical_Affairs\Clinical Study Files\Sensor Systems\ADC-US-RES-16157_InHouse Sensor\Statistics\Programs\SE105\AL\Data\Ap\part-0.parquet)")) %>%
-  collect() 
+Ap105 <- readRDS(gsub("\\\\", "/", r"(\\oneabbott.com\dept\ADC\Technical_OPS\Clinical_Affairs\Clinical Study Files\Sensor Systems\ADC-US-RES-16157_InHouse Sensor\Statistics\Programs\SE105\AL\Data\Ap.rds)"))
+```
+
+```{r}
+# Ap105 <- open_dataset(gsub("\\\\", "/", r"(\\oneabbott.com\dept\ADC\Technical_OPS\Clinical_Affairs\Clinical Study Files\Sensor Systems\ADC-US-RES-16157_InHouse Sensor\Statistics\Programs\SE105\AL\Data\Ap\part-0.parquet)")) %>%
+#   collect() 
 ```
 
 ```{r eval = params$analysis}
@@ -455,7 +466,7 @@ Ap <- Ap %>%
 `r if(params$analysis){knitr::asis_output("# **Difference Measures**")}`
 ```{r eval = params$analysis}
 #| label: difference measure function
-diff_measure_fun <- function(..., reference) {
+diff_measure_fun <- function(data, reference, ...) {
   
 diff_calculation <- list(
                           Mean = ~ mean(.x, na.rm = T),
@@ -467,21 +478,23 @@ diff_calculation <- list(
                          )
 
 if (reference == TRUE) {
-Ap |> 
+data |> 
+   # Filter GM values 
+   filter(between(Gl,40,400)) |>
    mutate(# Reference Level
-          Level = case_when(`FreeStyle Reading` < 100 ~ "<100 mg/dL",
+          Level = case_when(round(Reference + 0.001) < 100 ~ "<100 mg/dL",
                             .default = ">=100 mg/dL")) |> 
    # Overall Reference Level
    bind_rows(
-             Ap |> 
+             data |> 
+             # Filter GM values 
+             filter(between(Gl,40,400)) |>
              mutate(Level = "Overall")  
    ) |> 
    pivot_longer(`Difference(mg/dL)`:`Absolute Relative Difference(%)`,names_to = "Measure") |>
    mutate(
           # Factor order Measure
-           Measure = fct_inorder(Measure),
-          # Lot 
-           Lot = str_c("Lot",str_sub(`Condition ID`,3),sep = " ")) |> 
+           Measure = fct_inorder(Measure)) |> 
    # Difference(mg/dL) and Absolute Difference(mg/dL) for Reference Level < 100 mg/dL
    # Relative Difference(%) and Absolute Relative Difference(%) for Reference Level >= 100 mg/dL
    filter((Measure %in% c("Difference(mg/dL)", "Absolute Difference(mg/dL)") & 
@@ -496,11 +509,12 @@ Ap |>
    cols_align(align = "center") |>
    fmt_number(columns = Mean:Max,decimals = 1)
   } else {
-     Ap |> 
-   mutate(Lot = str_sub(`Condition ID`,3)) |> 
-   group_by(...) |> 
-   summarise(
-     across(c(`Difference(mg/dL)`:`Absolute Relative Difference(%)`), 
+     data |> 
+     # Filter GM values 
+     filter(between(Gl,40,400)) |> 
+     group_by(...) |> 
+     summarise(
+      across(c(`Difference(mg/dL)`:`Absolute Relative Difference(%)`), 
               diff_calculation[1:3],.names = "{.col} {.fn}"), N = n()) |> 
    relocate(N,.after = last_col()) |> 
    gt()  |> 
@@ -524,42 +538,55 @@ Ap |>
 }
 ```
 
+`r if(params$analysis){knitr::asis_output("## Real Time Difference Measures Group by Study Event, Lot and Glucose Level")}`
+```{r eval = params$analysis}
+#| column: page
+Ap |> 
+   mutate(Lot = str_c("Lot",str_sub(`Condition ID`,3), sep = " ")) |> 
+   diff_measure_fun(Data,Lot, Level,reference = T) 
+```
+
 `r if(params$analysis){knitr::asis_output("## Real Time Difference Measures Group by Study Event and Lot")}`
 ```{r eval = params$analysis}
 #| column: page
-diff_measure_fun(Data,Lot,Level,reference = T)
+Ap |> 
+   mutate(Lot = str_c("Lot",str_sub(`Condition ID`,3), sep = " ")) |> 
+   diff_measure_fun(Data,Lot,reference = F)
+```
+
+```{r eval = params$analysis}
+#| column: page
+# Ap |> 
+#    mutate(Lot = str_c("Lot",str_sub(`Condition ID`,3), sep = " ")) |> 
+#    diff_measure_fun(Lot, Level,reference = T) 
 ```
 
 `r if(params$analysis){knitr::asis_output("## Real Time Difference Measures Group by Lot")}`
 ```{r eval = params$analysis}
 #| column: page
-diff_measure_fun(Lot,Level,reference = T)
-```
-
-```{r eval = params$analysis}
-#| column: page
-diff_measure_fun(Data,Lot,reference = F)
-```
-
-```{r eval = params$analysis}
-#| column: page
-# diff_measure_fun(Lot,reference = F)
+Ap |> 
+   mutate(Lot = str_c("Lot",str_sub(`Condition ID`,3), sep = " ")) |> 
+   diff_measure_fun(Lot,reference = F)
 ```
 
 `r if(params$analysis){knitr::asis_output("# **System Agreement Analysis**")}`
 ```{r eval = params$analysis}
-system_agreement_fun <- function(..., long) {
+system_agreement_fun <- function(data, long, ...) {
 gl_breaks <- c(0,15,20,40,Inf)
 
 if (long == TRUE) {
-Ap |> 
-   mutate(Level = case_when(`FreeStyle Reading` < 70 ~ "<70 mg/dL",
+data |> 
+   # Filter GM values 
+   filter(between(Gl,40,400)) |>
+   mutate(Level = case_when(round(Reference + 0.001) < 70 ~ "<70 mg/dL",
                             .default = ">=70 mg/dL")) |> 
    # Overall 
-   bind_rows(Ap |> 
+   bind_rows(data |> 
+             # Filter GM values 
+             filter(between(Gl,40,400)) |>
              mutate(Level = "Overall")) |> 
-   mutate(Lot = str_c("Lot",str_sub(`Condition ID`,3),sep = " "),
-          Group = case_when(`FreeStyle Reading` < 70 ~ cut(round(`Absolute Difference(mg/dL)`,0), breaks = gl_breaks,include.lowest = T),
+   mutate(
+          Group = case_when(round(Reference + 0.001) < 70 ~ cut(round(`Absolute Difference(mg/dL)`,0), breaks = gl_breaks,include.lowest = T),
                             .default = cut(round(`Absolute Relative Difference(%)`,0), breaks = gl_breaks,include.lowest = T))) |> 
    group_by(...) |> 
    count(Level,Group,.drop = F) |> 
@@ -568,24 +595,29 @@ Ap |>
                 .default = n),
           Percent = round((cum/Sum)*100,1)) |> 
    ungroup() |> 
-   mutate(Group = rep(c("Within +- 15 mg/dL [0.8 mmol/L]","Within +- 20 mg/dL [1.1 mmol/L]","Within +- 40 mg/dL [2.2 mmol/L]","Outside +- 40 mg/dL [2.2 mmol/L]","Within +- 15%","Within +- 20%","Within +- 40% ","Outside +- 40%"),n()/8),
+   mutate(Group = rep(c("Within +- 15 mg/dL [0.8 mmol/L]","Within +- 20 mg/dL [1.1 mmol/L]","Within +- 40 mg/dL [2.2 mmol/L]","Outside +- 40 mg/dL [2.2 mmol/L]","Within +- 15%","Within +- 20%","Within +- 40% ","Outside +- 40%","Within ± 15 mg/dL or 15%","Within ± 20 mg/dL or 20%","Within ± 40 mg/dL or 40%","Outside ± 40 mg/dL or 40%"),n()/12),
           `N(%)` = str_c(cum,"/",Sum," ","(",Percent,"%)")) |> 
    group_by(...) |>
    gt() |>
    cols_align(align = "center") |>
    cols_hide(columns = c(n:Percent))
  } else {
-   Ap |> 
-   mutate(Level = case_when(`FreeStyle Reading` < 70 ~ "<70 mg/dL",
+   data |> 
+   # Filter GM values 
+   filter(between(Gl,40,400)) |>
+   mutate(Level = case_when(round(Reference + 0.001) < 70 ~ "<70 mg/dL",
                             .default = ">=70 mg/dL")) |> 
    # Overall 
-   bind_rows(Ap |> 
+   bind_rows(data |> 
+             # Filter GM values 
+             filter(between(Gl,40,400)) |>
              mutate(Level = "Overall")) |> 
-   mutate(Lot = str_c("Lot",str_sub(`Condition ID`,3),sep = " "),
-          Group = case_when(`FreeStyle Reading` < 70 ~ cut(round(`Absolute Difference(mg/dL)`,0), breaks = gl_breaks,include.lowest = T),
+   mutate(
+          Group = case_when(round(Reference + 0.001) < 70 ~ cut(round(`Absolute Difference(mg/dL)`,0), breaks = gl_breaks,include.lowest = T),
                             .default = cut(round(`Absolute Relative Difference(%)`,0), breaks = gl_breaks,include.lowest = T))) |> 
    group_by(...) |> 
    count(Level,Group,.drop = F) |> 
+   group_by(Level,.add = T) |> 
    mutate(Sum = sum(n),
           cum = case_when(row_number() %in% c(1:3) ~ cumsum(n),
                 .default = n),
@@ -602,29 +634,27 @@ Ap |>
 }
 ```
 
-`r if(params$analysis){knitr::asis_output("## Real Time System Accuracy Results Group by Study Event and Lot")}`
+`r if(params$analysis){knitr::asis_output("## Real Time System Accuracy Results Group by Study Event, Lot and Glucose Level")}`
 ```{r eval = params$analysis}
 #| column: page
-system_agreement_fun(Data,Lot,Level,long = T)
+Ap |> 
+   mutate(Lot = str_c("Lot",str_sub(`Condition ID`,3), sep = " ")) |> 
+   system_agreement_fun(Data,Lot,Level,long = F) 
 ```
 
-`r if(params$analysis){knitr::asis_output("## Real Time System Accuracy Results Group by Study Event and Lot")}`
+`r if(params$analysis){knitr::asis_output("## Real Time System Accuracy Results Group by Lot and Glucose Level")}`
 ```{r eval = params$analysis}
 #| column: page
-system_agreement_fun(Data,Lot,Level,long = F)
-```
-
-`r if(params$analysis){knitr::asis_output("## Real Time System Accuracy Results Group by Lot")}`
-```{r eval = params$analysis}
-#| column: page
-system_agreement_fun(Lot,Level,long = F)
+Ap |> 
+   mutate(Lot = str_c("Lot",str_sub(`Condition ID`,3), sep = " ")) |> 
+   system_agreement_fun(Lot,long = F) 
 ```
 
 `r if(params$analysis){knitr::asis_output("## Real Time System Accuracy Plot")}`
 ```{r eval = params$analysis}
 #| column: body-outset
 ggplot(Ap) +
-  geom_point(aes(x = `FreeStyle Reading`, y = `Difference(mg/dL)`, color = str_sub(`Condition ID`,3), shape = str_sub(`Condition ID`,3))) +
+  geom_point(aes(x = Reference, y = `Difference(mg/dL)`, color = str_sub(`Condition ID`,3), shape = str_sub(`Condition ID`,3))) +
   labs(x = "BG Reference (mg/dL)", y = "Bias (mg/dL)", color = "Lot", shape = "Lot") +
   theme_bw() +
   theme(panel.grid.major.y = element_blank(),panel.grid.minor.y = element_blank(),legend.position = "bottom",plot.title = element_text(hjust = 0.5))
