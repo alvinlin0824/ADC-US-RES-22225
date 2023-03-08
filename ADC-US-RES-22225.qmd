@@ -154,6 +154,7 @@ knitr::knit_exit()
 ```
 
 ```{r}
+#| label: Apol function
 #| warning: false
 Apol_fun <- function(index, ...){
     # Read Events csv
@@ -202,6 +203,7 @@ Apol_fun <- function(index, ...){
 ```
 
 ```{r}
+#| label: For Loop UUU
 #| warning: false
 UUU <- vector("list",length(events_path))
 for (i in seq_along(events_path)) {
@@ -221,6 +223,7 @@ for (i in seq_along(events_path)) {
 ```
 
 ```{r}
+#| label: List Rbind UUU
 UUU <- UUU %>% 
        list_rbind() %>% 
        # Remove Duplicated Uploads
@@ -255,6 +258,7 @@ UUU <- UUU %>%
 <!-- Delete Code -->
 
 ```{r}
+#| label: Import BG Data
 #| warning: false
 freestyle <- map(free_path,vroom,delim = ",",col_names = T,show_col_types = F,col_select = c(`Unique Record ID`,Date,Time,`FreeStyle Reading`,Status)) %>% 
    map(
@@ -285,7 +289,7 @@ freestyle <- map(free_path,vroom,delim = ",",col_names = T,show_col_types = F,co
 
 `r if(params$plot){knitr::asis_output("# **Summary Table**")}`
 ```{r eval = params$plot}
-#| column: body-outset
+#| label: Summary Table
 UUU %>% 
     group_by(`Site ID` = str_c("0",str_sub(`Subject ID`,1,2))) %>% 
     summarise(`Number of Subject` = n_distinct(`Subject ID`),
@@ -295,6 +299,7 @@ UUU %>%
 ```
 
 ```{r eval = params$plot}
+#| label: Profile plot function
 my_plot <- function(Id, type, ...) {
   highchart() %>%
   # Add title
@@ -369,8 +374,8 @@ for (i in seq_along(UD)){
 htmltools::tagList(plots)
 ```
 
-
 ```{r eval = params$analysis}
+#| label: Pair BG function
 PAIRBG_fun <- function(data){
   # BG Strips Data
   freestyle %>%
@@ -404,6 +409,7 @@ PAIRBG_fun <- function(data){
 ```
 
 ```{r eval = params$analysis}
+#| label: Paired Data
 Ap <- UUU %>% 
       # Current Glucose Only
       filter(Type == "904") %>%
@@ -433,7 +439,7 @@ Ap <- UUU %>%
 ```
 
 ```{r eval = params$analysis}
-#| label: Load IH105 Paired Data
+#| label: Import IH105 Paired Data
 Ap105 <- open_dataset(gsub("\\\\", "/", r"(\\oneabbott.com\dept\ADC\Technical_OPS\Clinical_Affairs\Clinical Study Files\Sensor Systems\ADC-US-RES-16157_InHouse Sensor\Statistics\Programs\SE105\AL\Data\Ap\part-0.parquet)")) %>%
   collect() 
 ```
@@ -443,13 +449,14 @@ Ap105 <- open_dataset(gsub("\\\\", "/", r"(\\oneabbott.com\dept\ADC\Technical_OP
 Ap <- Ap %>% 
       bind_rows(Ap105) %>% 
       mutate(Data = case_when(str_starts(`Subject ID`,"57") ~ "225 SE07",
-                                       str_starts(`Subject ID`,"81") ~ "225 SE08",
-                                       .default =  "IH105"))
+                              str_starts(`Subject ID`,"81") ~ "225 SE08",
+                              .default =  "IH105"))
 ```
 
 `r if(params$analysis){knitr::asis_output("# **Difference Measures**")}`
 ```{r eval = params$analysis}
-diff_measure_fun <- function(...) {
+#| label: difference measure function
+diff_measure_fun <- function(..., reference) {
   
 diff_calculation <- list(
                           Mean = ~ mean(.x, na.rm = T),
@@ -460,11 +467,18 @@ diff_calculation <- list(
                           N = ~ sum(!is.na(.x),na.rm = T)
                          )
 
+if (reference == TRUE) {
 Ap |> 
-   pivot_longer(`Difference(mg/dL)`:`Absolute Relative Difference(%)`,names_to = "Measure") |> 
    mutate(# Reference Level
-           Level = case_when(`FreeStyle Reading` < 100 ~ "<100 mg/dL",
-                            .default = ">=100 mg/dL"),
+          Level = case_when(`FreeStyle Reading` < 100 ~ "<100 mg/dL",
+                            .default = ">=100 mg/dL")) |> 
+   # Overall Reference Level
+   bind_rows(
+             Ap |> 
+             mutate(Level = "Overall")  
+   ) |> 
+   pivot_longer(`Difference(mg/dL)`:`Absolute Relative Difference(%)`,names_to = "Measure") |>
+   mutate(
           # Factor order Measure
            Measure = fct_inorder(Measure),
           # Lot 
@@ -472,72 +486,65 @@ Ap |>
    # Difference(mg/dL) and Absolute Difference(mg/dL) for Reference Level < 100 mg/dL
    # Relative Difference(%) and Absolute Relative Difference(%) for Reference Level >= 100 mg/dL
    filter((Measure %in% c("Difference(mg/dL)", "Absolute Difference(mg/dL)") & 
-          Level == "<100 mg/dL") | 
+          Level %in% c("<100 mg/dL", "Overall")) | 
           (Measure %in% c("Relative Difference(%)", "Absolute Relative Difference(%)") & 
-          Level == ">=100 mg/dL")) |> 
+          Level %in% c(">=100 mg/dL", "Overall"))) |> 
    # User-Defined group variables
    group_by(...) |> 
-   group_by(Level,Measure,.add = TRUE) |> 
+   group_by(Measure,.add = TRUE) |> 
    summarise_at(.vars = "value", diff_calculation) |> 
    gt() |>
    cols_align(align = "center") |>
    fmt_number(columns = Mean:Max,decimals = 1)
+  } else {
+     Ap |> 
+   mutate(Lot = str_sub(`Condition ID`,3)) |> 
+   group_by(...) |> 
+   summarise(
+     across(c(`Difference(mg/dL)`:`Absolute Relative Difference(%)`), 
+              diff_calculation[1:3],.names = "{.col} {.fn}"), N = n()) |> 
+   relocate(N,.after = last_col()) |> 
+   gt()  |> 
+   cols_align(align = "center") |> 
+   tab_spanner(label = "Difference(mg/dL)",columns = c("Difference(mg/dL) Mean","Difference(mg/dL) Median","Difference(mg/dL) SD")) |> 
+   tab_spanner(label = "Abs. Difference (mg/dL)",columns = c("Absolute Difference(mg/dL) Mean","Absolute Difference(mg/dL) Median","Absolute Difference(mg/dL) SD")) |> 
+   tab_spanner(label = "Relative Difference(%)",columns = c("Relative Difference(%) Mean","Relative Difference(%) Median","Relative Difference(%) SD")) |> 
+   tab_spanner(label = "Absolute Relative Difference(%)",columns = c("Absolute Relative Difference(%) Mean","Absolute Relative Difference(%) Median","Absolute Relative Difference(%) SD")) |> 
+   fmt_number(columns = contains(c("Mean","Median")),decimals = 1) |> 
+   fmt_number(columns = contains(c("SD")),decimals = 2) |> 
+    cols_label(
+      `Difference(mg/dL) Mean` = "Mean",`Difference(mg/dL) Median` = "Median",
+      `Difference(mg/dL) SD` = "SD",
+      `Relative Difference(%) Mean` = "Mean",`Relative Difference(%) Median` = "Median",`Relative Difference(%) SD` = "SD",
+      `Absolute Difference(mg/dL) Mean` = "Mean",`Absolute Difference(mg/dL) Median` = "Median",
+      `Absolute Difference(mg/dL) SD` =  "SD",`Absolute Relative Difference(%) Mean` = "Mean",
+      `Absolute Relative Difference(%) Median` = "Median",
+      `Absolute Relative Difference(%) SD` = "SD"
+    )
+   }
 }
 ```
 
 `r if(params$analysis){knitr::asis_output("## Real Time Difference Measures Group by Study Event and Lot")}`
 ```{r eval = params$analysis}
 #| column: page
-diff_measure_fun(Data,Lot)
+diff_measure_fun(Data,Lot,Level,reference = T)
 ```
 
 `r if(params$analysis){knitr::asis_output("## Real Time Difference Measures Group by Lot")}`
 ```{r eval = params$analysis}
 #| column: page
-diff_measure_fun(Lot)
-```
-
-```{r}
-#| label: Table Function
-# table_fun <- function(type, ...) {
-#    # .data %>%
-#    Ap %>%
-#    filter(Type %in% type) %>%
-#    group_by(...) %>%
-#    summarise(
-#      across(c(Bias:`Hybrid Bias`), my_sum,.names = "{.col} {.fn}"),
-#             N = n(),.groups = "drop") %>% 
-#    relocate(N,.after = last_col()) %>%  
-#    gt(groupname_col = "Data") %>%
-#    cols_align(align = "center") %>%
-#    tab_spanner(label = "Bias (mg/dL)",columns = c("Bias Mean","Bias Median","Bias SD")) %>%
-#    tab_spanner(label = "% Bias",columns = c("Percent Bias Mean","Percent Bias Median","Percent Bias SD")) %>%
-#    tab_spanner(label = "Abs. Bias (mg/dL)",columns = c("Absolute Bias Mean","Absolute Bias Median","Absolute Bias SD")) %>%
-#    tab_spanner(label = "MARD(%)",columns = c("Absolute Percent Bias Mean","Absolute Percent Bias Median","Absolute Percent Bias SD")) %>%
-#    tab_spanner(label = "Bias (mg/dL or %)",columns = c("Hybrid Bias Mean","Hybrid Bias Median","Hybrid Bias SD")) %>%
-#     fmt_number(columns = contains(c("Mean","Median")),decimals = 1) %>%
-#     fmt_number(columns = contains(c("SD")),decimals = 2) %>%
-#     cols_label(
-#       `Bias Mean` = "Mean",`Bias Median` = "Median",`Bias SD` = "SD",
-#       `Percent Bias Mean` = "Mean",`Percent Bias Median` = "Median",`Percent Bias SD` = "SD",
-#       `Absolute Bias Mean` = "Mean",`Absolute Bias Median` = "Median",
-#       `Absolute Bias SD` =  "SD",`Absolute Percent Bias Mean` = "Mean",
-#       `Absolute Percent Bias Median` = "Median",
-#       `Absolute Percent Bias SD` = "SD",`Hybrid Bias Mean` = "Mean",
-#       `Hybrid Bias Median` = "Median",`Hybrid Bias SD` = "SD"
-#     )
-# }
+diff_measure_fun(Lot,Level,reference = T)
 ```
 
 ```{r}
 #| column: page
-# table_fun(type = c("904"),Data,str_sub(`Condition ID`,3)) %>% 
-#   cols_label("str_sub(`Condition ID`, 3)" = "Lot") 
+# diff_measure_fun(Data,Lot,reference = F)
 ```
 
 ```{r}
-# table_fun(type = c("904"),str_sub(`Condition ID`,3)) %>% 
-#   cols_label("str_sub(`Condition ID`, 3)" = "Lot") 
+#| column: page
+# diff_measure_fun(Lot,reference = F)
 ```
 
 `r if(params$analysis){knitr::asis_output("# **System Agreement Analysis**")}`
@@ -680,7 +687,7 @@ Ap %>%
 ```{r eval = params$analysis}
 #| column: body-outset
 ggplot(Ap) +
-  geom_point(aes(x = `FreeStyle Reading`, y = Bias, color = str_sub(`Condition ID`,3), shape = str_sub(`Condition ID`,3))) +
+  geom_point(aes(x = `FreeStyle Reading`, y = `Difference(mg/dL)`, color = str_sub(`Condition ID`,3), shape = str_sub(`Condition ID`,3))) +
   labs(x = "BG Reference (mg/dL)", y = "Bias (mg/dL)", color = "Lot", shape = "Lot") +
   theme_bw() +
   theme(panel.grid.major.y = element_blank(),panel.grid.minor.y = element_blank(),legend.position = "bottom",plot.title = element_text(hjust = 0.5))
