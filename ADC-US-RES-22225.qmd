@@ -12,6 +12,7 @@ toc-location: left
 execute:
   echo: false
   warning: false 
+  keep-md: true
 column: body-outset
 params:
     upload: FALSE
@@ -41,6 +42,7 @@ library(reactable)
 library(highcharter)
 library(haven)
 library(gt)
+library(arrow)
 ```
 
 ```{r}
@@ -220,7 +222,7 @@ for (i in seq_along(events_path)) {
 
 ```{r}
 UUU <- UUU %>% 
-       bind_rows() %>% 
+       list_rbind() %>% 
        # Remove Duplicated Uploads
        distinct()
 ```
@@ -254,19 +256,30 @@ UUU <- UUU %>%
 
 ```{r}
 #| warning: false
-# Apol
-freestyle <- map(free_path,vroom,delim = ",",col_names = T,show_col_types = F,col_select = c(`Unique Record ID`,Date,Time,`FreeStyle Reading`)) %>% 
+freestyle <- map(free_path,vroom,delim = ",",col_names = T,show_col_types = F,col_select = c(`Unique Record ID`,Date,Time,`FreeStyle Reading`,Status)) %>% 
    map(
  ~ transmute(.x,`Subject ID` = case_when(
               str_extract(.[1,1],regex("(?<=Site ID = ).{3}",ignore_case = T)) == "ADC" ~ str_extract(.[1,1],regex("(?<=Subject ID = ).{4}",ignore_case = T)),
-                        TRUE ~ str_c(str_extract(.[1,1],regex("(?<=Site ID = 0).{2}",ignore_case = T)),str_extract(.[1,1],regex("(?<=Subject ID = ).{4}",ignore_case = T)))),
+              ## Remedy For Site ID == 00
+              str_extract(.[1,1],regex("(?<=Site ID = ).{2}",ignore_case = T)) == "00" ~ 
+                str_c(str_extract(.[1,1],regex("(?<=Site ID = 00).{1}",ignore_case = T)),str_extract(.[1,1],regex("(?<=Subject ID = ).{4}",ignore_case = T))),
+                        .default = str_c(str_extract(.[1,1],regex("(?<=Site ID = 0).{2}",ignore_case = T)),str_extract(.[1,1],regex("(?<=Subject ID = ).{4}",ignore_case = T)))
+              ),
              `BG Date Time` = ymd_hms(str_c(ymd(Date),hms::as_hms(Time),sep = " ")),
-           `FreeStyle Reading` = `FreeStyle Reading`
+             `FreeStyle Reading` = `FreeStyle Reading`,
+              Status = Status
           )) %>% 
    map(~ filter(.x,!is.na(`BG Date Time`))) %>% 
-   bind_rows() %>% 
-   # Remove Duplicated Uploads
+   list_rbind() %>%  
+   # Filter Status == 0
+   filter(Status == 0) %>% 
+   # Calculate Average freeStyle reading if time stamp are same.
+   mutate(`FreeStyle Reading` = mean(`FreeStyle Reading`),
+          .by = c(`Subject ID`,`BG Date Time`)) %>% 
+   # Remove Duplicated 
    distinct() %>% 
+   # select Useful Columns
+   select(-Status) %>% 
    arrange(`Subject ID`,`BG Date Time`)
 ```
 
@@ -297,7 +310,7 @@ my_plot <- function(Id, type, ...) {
            # 904 is Real-time glucose 906 is current glucose
            mutate(Type = case_when(Type == "906" ~ "Current Glucose",
                                    Type == "904" ~ "Real-Time Glucose",
-                                   TRUE ~ "Historic Glucose")),
+                                   .default = "Historic Glucose")),
     type = "line",
     hcaes(x = datetime_to_timestamp(`Date Time`), y = Gl, group = `Condition ID`)) %>%
   # BG data 
@@ -356,25 +369,25 @@ for (i in seq_along(UD)){
 htmltools::tagList(plots)
 ```
 
-`r if(params$analysis){knitr::asis_output("# **Difference Measures**")}`
+
 ```{r eval = params$analysis}
-PAIR_fun <- function(data){
+PAIRBG_fun <- function(data){
   # BG Strips Data
   freestyle %>%
      # Remove Extreme Reference readings <20 or >500
      filter(between(`FreeStyle Reading`,20,500)) %>% 
-     # mutate(across(where(is.POSIXct), ~ ymd_hms(.x,tz = "US/Pacific"))) %>%
      full_join(
                # Sensor Data
                data %>%
                 mutate(
                   `Lower Bound` = case_when(Type %in% c("904","906") ~ `Date Time` - dminutes(5),
-                                              TRUE ~ `Date Time` - dminutes(8)),
+                                            .default = `Date Time` - dminutes(8)),
                   `Upper Bound` = case_when(Type %in% c("904","906") ~ `Date Time` + dminutes(5),
-                                              TRUE ~ `Date Time` + dminutes(8))
+                                            .default = `Date Time` + dminutes(8))
                      ),
-                     by = c("Subject ID")
-                     )  %>% 
+                   by = "Subject ID",
+                   multiple = "all"
+                     ) %>%
       filter(`BG Date Time` >= `Lower Bound`,`BG Date Time` <= `Upper Bound`) %>% 
       # Select the nearest time
       group_by(`Subject ID`,`BG Date Time`) %>%
@@ -385,7 +398,7 @@ PAIR_fun <- function(data){
       group_by(`Subject ID`,`Date Time`) %>%
       arrange(desc(`Date Time`)) %>%
       slice_min(abs(`BG Date Time` - `Date Time`),n = 1,with_ties = F) %>%
-      ungroup() %>% 
+      ungroup() %>%
       select(-c(contains("Bound")))
 }
 ```
@@ -396,22 +409,33 @@ Ap <- UUU %>%
       filter(Type == "904") %>%
       # Remove Extreme Gl readings < 40 or > 400
       filter(between(Gl,40,400)) %>% 
-      group_split(`Subject ID`,`Condition ID`,Type) %>% 
-      map_dfr(~ PAIR_fun(data = .x)) %>% 
+      group_split(`Subject ID`,`Condition ID`,Type) %>%
+      # New anonymous function
+      map(\(df) PAIRBG_fun(data = df)) %>%
+      # formula syntax
+      # map(~ PAIRBG_fun(data = .x)) %>%
+      list_rbind() %>% 
       # Row-wise Calculation
       mutate(
-              Bias = Gl - `FreeStyle Reading`,
-            `Percent Bias` = (Bias/`FreeStyle Reading`)*100,
-            `Absolute Bias` = abs(Bias),
-            `Absolute Percent Bias` = abs(`Percent Bias`),
-            `Hybrid Bias` = case_when(`FreeStyle Reading` < 100 ~ Bias,
-                                       TRUE ~ `Percent Bias`)
+            # Reference glucose values < 100 mg/dL
+            `Difference(mg/dL)` = Gl - `FreeStyle Reading`,
+            `Absolute Difference(mg/dL)` = abs(`Difference(mg/dL)`),
+            # Reference glucose values >= 100 mg/dL
+            `Relative Difference(%)` = (`Difference(mg/dL)`/`FreeStyle Reading`)*100,
+            `Absolute Relative Difference(%)` = abs(`Relative Difference(%)`),
+            `Hybrid Bias` = case_when(`FreeStyle Reading` < 100 ~ `Difference(mg/dL)`,
+                                       .default = `Relative Difference(%)`)
              )
+```
+
+```{r}
+# Ap105 <- vroom(gsub("\\\\", "/", r"(\\oneabbott.com\dept\ADC\Technical_OPS\Clinical_Affairs\Clinical Study Files\Sensor Systems\ADC-US-RES-16157_InHouse Sensor\Statistics\Programs\SE105\AL\Data\IH105.csv)"),delim = ",",col_names = T,show_col_types = F,col_types = c(`Subject ID` = "c",Type = "c"))
 ```
 
 ```{r eval = params$analysis}
 #| label: Load IH105 Paired Data
-Ap105 <- vroom(gsub("\\\\", "/", r"(\\oneabbott.com\dept\ADC\Technical_OPS\Clinical_Affairs\Clinical Study Files\Sensor Systems\ADC-US-RES-16157_InHouse Sensor\Statistics\Programs\SE105\AL\Data\IH105.csv)"),delim = ",",col_names = T,show_col_types = F,col_types = c(`Subject ID` = "c",Type = "c"))
+Ap105 <- open_dataset(gsub("\\\\", "/", r"(\\oneabbott.com\dept\ADC\Technical_OPS\Clinical_Affairs\Clinical Study Files\Sensor Systems\ADC-US-RES-16157_InHouse Sensor\Statistics\Programs\SE105\AL\Data\Ap\part-0.parquet)")) %>%
+  collect() 
 ```
 
 ```{r eval = params$analysis}
@@ -420,61 +444,100 @@ Ap <- Ap %>%
       bind_rows(Ap105) %>% 
       mutate(Data = case_when(str_starts(`Subject ID`,"57") ~ "225 SE07",
                                        str_starts(`Subject ID`,"81") ~ "225 SE08",
-                                       TRUE ~ "IH105"))
+                                       .default =  "IH105"))
 ```
 
+`r if(params$analysis){knitr::asis_output("# **Difference Measures**")}`
 ```{r eval = params$analysis}
-my_sum <- list(
-  Mean = ~ mean(.x, na.rm = T),
-  Median = ~ median(.x, na.rm = T),
-  SD = ~ sd(.x, na.rm = T)
-)
-```
+diff_measure_fun <- function(...) {
+  
+diff_calculation <- list(
+                          Mean = ~ mean(.x, na.rm = T),
+                          Median = ~ median(.x, na.rm = T),
+                          SD = ~ sd(.x, na.rm = T),
+                          Min = ~ min(.x, na.rm = T),
+                          Max = ~ max(.x, na.rm = T),
+                          N = ~ sum(!is.na(.x),na.rm = T)
+                         )
 
-```{r eval = params$analysis}
-#| label: Table Function
-table_fun <- function(type, ...) {
-   # .data %>%
-   Ap %>%
-   filter(Type %in% type) %>%
-   group_by(...) %>%
-   summarise(
-     across(c(Bias:`Hybrid Bias`), my_sum,.names = "{.col} {.fn}"),
-            N = n()) %>% 
-   relocate(N,.after = last_col()) %>%  
-   gt() %>%
-   cols_align(align = "center") %>%
-   tab_spanner(label = "Bias (mg/dL)",columns = c("Bias Mean","Bias Median","Bias SD")) %>%
-   tab_spanner(label = "% Bias",columns = c("Percent Bias Mean","Percent Bias Median","Percent Bias SD")) %>%
-   tab_spanner(label = "Abs. Bias (mg/dL)",columns = c("Absolute Bias Mean","Absolute Bias Median","Absolute Bias SD")) %>%
-   tab_spanner(label = "MARD(%)",columns = c("Absolute Percent Bias Mean","Absolute Percent Bias Median","Absolute Percent Bias SD")) %>%
-   tab_spanner(label = "Bias (mg/dL or %)",columns = c("Hybrid Bias Mean","Hybrid Bias Median","Hybrid Bias SD")) %>%
-    fmt_number(columns = contains(c("Mean","Median")),decimals = 1) %>%
-    fmt_number(columns = contains(c("SD")),decimals = 2) %>%
-    cols_label(
-      `Bias Mean` = "Mean",`Bias Median` = "Median",`Bias SD` = "SD",
-      `Percent Bias Mean` = "Mean",`Percent Bias Median` = "Median",`Percent Bias SD` = "SD",
-      `Absolute Bias Mean` = "Mean",`Absolute Bias Median` = "Median",
-      `Absolute Bias SD` =  "SD",`Absolute Percent Bias Mean` = "Mean",
-      `Absolute Percent Bias Median` = "Median",
-      `Absolute Percent Bias SD` = "SD",`Hybrid Bias Mean` = "Mean",
-      `Hybrid Bias Median` = "Median",`Hybrid Bias SD` = "SD"
-    )
+Ap |> 
+   pivot_longer(`Difference(mg/dL)`:`Absolute Relative Difference(%)`,names_to = "Measure") |> 
+   mutate(# Reference Level
+           Level = case_when(`FreeStyle Reading` < 100 ~ "<100 mg/dL",
+                            .default = ">=100 mg/dL"),
+          # Factor order Measure
+           Measure = fct_inorder(Measure),
+          # Lot 
+           Lot = str_c("Lot",str_sub(`Condition ID`,3),sep = " ")) |> 
+   # Difference(mg/dL) and Absolute Difference(mg/dL) for Reference Level < 100 mg/dL
+   # Relative Difference(%) and Absolute Relative Difference(%) for Reference Level >= 100 mg/dL
+   filter((Measure %in% c("Difference(mg/dL)", "Absolute Difference(mg/dL)") & 
+          Level == "<100 mg/dL") | 
+          (Measure %in% c("Relative Difference(%)", "Absolute Relative Difference(%)") & 
+          Level == ">=100 mg/dL")) |> 
+   # User-Defined group variables
+   group_by(...) |> 
+   group_by(Level,Measure,.add = TRUE) |> 
+   summarise_at(.vars = "value", diff_calculation) |> 
+   gt() |>
+   cols_align(align = "center") |>
+   fmt_number(columns = Mean:Max,decimals = 1)
 }
 ```
 
 `r if(params$analysis){knitr::asis_output("## Real Time Difference Measures Group by Study Event and Lot")}`
 ```{r eval = params$analysis}
 #| column: page
-table_fun(type = c("904"),Data,str_sub(`Condition ID`,3)) %>% 
-  cols_label("str_sub(`Condition ID`, 3)" = "Lot") 
+diff_measure_fun(Data,Lot)
 ```
 
 `r if(params$analysis){knitr::asis_output("## Real Time Difference Measures Group by Lot")}`
 ```{r eval = params$analysis}
 #| column: page
-table_fun(type = c("904"),str_sub(`Condition ID`,3)) %>% 
-  cols_label("str_sub(`Condition ID`, 3)" = "Lot") 
+diff_measure_fun(Lot)
+```
+
+```{r}
+#| label: Table Function
+# table_fun <- function(type, ...) {
+#    # .data %>%
+#    Ap %>%
+#    filter(Type %in% type) %>%
+#    group_by(...) %>%
+#    summarise(
+#      across(c(Bias:`Hybrid Bias`), my_sum,.names = "{.col} {.fn}"),
+#             N = n(),.groups = "drop") %>% 
+#    relocate(N,.after = last_col()) %>%  
+#    gt(groupname_col = "Data") %>%
+#    cols_align(align = "center") %>%
+#    tab_spanner(label = "Bias (mg/dL)",columns = c("Bias Mean","Bias Median","Bias SD")) %>%
+#    tab_spanner(label = "% Bias",columns = c("Percent Bias Mean","Percent Bias Median","Percent Bias SD")) %>%
+#    tab_spanner(label = "Abs. Bias (mg/dL)",columns = c("Absolute Bias Mean","Absolute Bias Median","Absolute Bias SD")) %>%
+#    tab_spanner(label = "MARD(%)",columns = c("Absolute Percent Bias Mean","Absolute Percent Bias Median","Absolute Percent Bias SD")) %>%
+#    tab_spanner(label = "Bias (mg/dL or %)",columns = c("Hybrid Bias Mean","Hybrid Bias Median","Hybrid Bias SD")) %>%
+#     fmt_number(columns = contains(c("Mean","Median")),decimals = 1) %>%
+#     fmt_number(columns = contains(c("SD")),decimals = 2) %>%
+#     cols_label(
+#       `Bias Mean` = "Mean",`Bias Median` = "Median",`Bias SD` = "SD",
+#       `Percent Bias Mean` = "Mean",`Percent Bias Median` = "Median",`Percent Bias SD` = "SD",
+#       `Absolute Bias Mean` = "Mean",`Absolute Bias Median` = "Median",
+#       `Absolute Bias SD` =  "SD",`Absolute Percent Bias Mean` = "Mean",
+#       `Absolute Percent Bias Median` = "Median",
+#       `Absolute Percent Bias SD` = "SD",`Hybrid Bias Mean` = "Mean",
+#       `Hybrid Bias Median` = "Median",`Hybrid Bias SD` = "SD"
+#     )
+# }
+```
+
+```{r}
+#| column: page
+# table_fun(type = c("904"),Data,str_sub(`Condition ID`,3)) %>% 
+#   cols_label("str_sub(`Condition ID`, 3)" = "Lot") 
+```
+
+```{r}
+# table_fun(type = c("904"),str_sub(`Condition ID`,3)) %>% 
+#   cols_label("str_sub(`Condition ID`, 3)" = "Lot") 
 ```
 
 `r if(params$analysis){knitr::asis_output("# **System Agreement Analysis**")}`
@@ -540,9 +603,9 @@ gl_breaks <- c(0,10,15,20,30,40,Inf)
 Ap %>% 
    # filter(Type %in% type) %>%
    mutate(Level = case_when(`FreeStyle Reading` < 70 ~ "<70 mg/dL",
-                            TRUE ~ ">=70 mg/dL"),
+                            .default = ">=70 mg/dL"),
           Group = case_when(`FreeStyle Reading` < 70 ~ cut(round(`Absolute Bias`,0), breaks = gl_breaks,include.lowest = T),
-                              TRUE ~ cut(round(`Absolute Percent Bias`,0), breaks = gl_breaks,include.lowest = T)),
+                            .default = cut(round(`Absolute Percent Bias`,0), breaks = gl_breaks,include.lowest = T)),
           Lot = str_sub(`Condition ID`,3)) %>% 
    # group_by(...) %>% 
    group_by(Data,Level,Lot,Group) %>%
@@ -550,24 +613,14 @@ Ap %>%
    complete(Group,fill = list(N = 0)) %>%
    mutate(Sum = sum(N),
           cum = case_when(row_number() %in% c(1:5) ~ cumsum(N),
-                          TRUE ~ N),
+                          .default = N),
                     Percent = round((cum/Sum)*100,1),
           Group = c("Within +- 10 mg/dL","Within +- 15 mg/dL","Within +- 20 mg/dL","Within +- 30 mg/dL","Within +- 40 mg/dL ","Outside +- 40 mg/dL"),
           `N(%)` = str_c(cum,"/",Sum," ","(",Percent,"%)")) %>%
    ungroup() %>%
    pivot_wider(id_cols = c(Data,Level,Lot),names_from = Group,values_from = `N(%)`) %>% 
-   gt() %>% 
-   cols_hide(Data) %>% 
-   cols_align(align = "center") %>% 
-     tab_row_group(
-     label = "IH105",
-     rows = c(25:36)) %>% 
-    tab_row_group(
-     label = "225 SE08",
-     rows = c(13:24)) %>% 
-   tab_row_group(
-     label = "225 SE07",
-     rows = c(1:12)) 
+   gt(groupname_col = c("Data","Level")) %>%
+   cols_align(align = "center",columns = everything())
 # }
 ```
 
@@ -579,9 +632,9 @@ gl_breaks <- c(0,10,15,20,30,40,Inf)
 Ap %>% 
    # filter(Type %in% type) %>%
    mutate(Level = case_when(`FreeStyle Reading` < 70 ~ "<70 mg/dL",
-                            TRUE ~ ">=70 mg/dL"),
+                            .default = ">=70 mg/dL"),
           Group = case_when(`FreeStyle Reading` < 70 ~ cut(round(`Absolute Bias`,0), breaks = gl_breaks,include.lowest = T),
-                              TRUE ~ cut(round(`Absolute Percent Bias`,0), breaks = gl_breaks,include.lowest = T)),
+                            .default = cut(round(`Absolute Percent Bias`,0), breaks = gl_breaks,include.lowest = T)),
           Lot = str_sub(`Condition ID`,3)) %>% 
    # group_by(...) %>% 
    group_by(Level,Lot,Group) %>%
@@ -589,13 +642,13 @@ Ap %>%
    complete(Group,fill = list(N = 0)) %>%
    mutate(Sum = sum(N),
           cum = case_when(row_number() %in% c(1:5) ~ cumsum(N),
-                          TRUE ~ N),
+                          .default = N),
                     Percent = round((cum/Sum)*100,1),
           Group = c("Within +- 10 mg/dL","Within +- 15 mg/dL","Within +- 20 mg/dL","Within +- 30 mg/dL","Within +- 40 mg/dL ","Outside +- 40 mg/dL"),
           `N(%)` = str_c(cum,"/",Sum," ","(",Percent,"%)")) %>%
    ungroup() %>%
    pivot_wider(id_cols = c(Level,Lot),names_from = Group,values_from = `N(%)`) %>% 
-   gt() %>% 
+   gt(groupname_col = "Level") %>% 
    cols_align(align = "center") 
 # }
 ```
