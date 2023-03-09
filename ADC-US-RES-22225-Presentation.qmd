@@ -1,0 +1,573 @@
+---
+title: "ADC-US-RES-22225 & ADC-US-RES-16157 Sub Study 105"
+author: "Alvin, Lin"
+date: "`r Sys.Date()`"
+format:
+  revealjs:
+    incremental: true
+    slide-number: true
+    chalkboard:
+      theme: whiteboard
+      boardmarker-width: 5
+      buttons: false
+---
+
+```{r}
+#| label: Libaray Packages
+#| include: false
+#| message: false
+library(tidyverse)
+library(magrittr)
+library(haven)
+library(reactable)
+library(janitor)
+library(highcharter)
+library(gt)
+```
+
+# Outline
+
+-   Study Objectives
+-   Sensor Insertion Attempts
+-   Demographics and Diabetes History
+-   Accuracy Performance
+-   Profile Plot
+
+::: {.notes}
+This is the outline for today presentation. How many sensors insertion attempts and the summary table for demographics. Lastly, the performance of the sensors and profile plots
+:::
+
+## Study Objectives
+
+-   To evaluate the performance of sensors with new carbon cut design.
+-   The study includes 6 lots and each subject wears 4 sensors, two on the back of each upper arm.
+
+::: {.notes}
+So The objective of 225 Study Event 7 and Study Event 8 and InHouse 105 is to evaluate the performance of sensors with new carbon cut design and the study includes 6 lots and each subject wears 4 sensors, two on the back of each upper arm.
+:::
+
+## Sensor Insertion Attempts
+
+<!-- 225 EDC \\wf00168p.oneabbott.com\data1\CDM\ADC-US-RES-22225\SE07_08_Glu\OpenClinica\Current -->
+
+<!-- 105 EDC \\wf00168p.oneabbott.com\data1\CDM\ADC-US-RES-16157_InHouse Sensor\OpenClinicaExtract\Current\105 -->
+
+```{r}
+#| label: IH105 sensor use
+du1 <- read_sas(gsub("\\\\", "/", r"(\\wf00168p.oneabbott.com\data1\CDM\ADC-US-RES-16157_InHouse Sensor\OpenClinicaExtract\Current\105\du1.sas7bdat)"))
+du1 <- du1 |>
+       filter(!str_detect(DUYN1,regex("CHECK HERE IF NO DATA RECORDED|no_data_recorded",ignore_case = T))) |>
+       mutate(Subject = as.character(Subject)) |>
+       arrange(Subject)
+```
+
+```{r}
+#| label: Combine IH105 and 225 Device Incident
+de <- read_sas(gsub("\\\\", "/", r"(\\wf00168p.oneabbott.com\data1\CDM\ADC-US-RES-16157_InHouse Sensor\OpenClinicaExtract\Current\105\de.sas7bdat)"))|> 
+      bind_rows(
+       read_sas(gsub("\\\\", "/", r"(\\wf00168p.oneabbott.com\data1\CDM\ADC-US-RES-22225\SE07_08_Glu\OpenClinica\Current\de.sas7bdat)")) |> 
+      mutate(DESPID02 = as.character(DESPID02),
+             DETXT03 = as.character(DETXT03)))
+de <- de %>%
+         filter(!str_detect(DEYN01,regex("CHECK HERE IF NO DATA RECORDED|no_data_recorded",ignore_case = T))) %>%
+         mutate(Subject = as.character(Subject)) %>%
+         arrange(Subject)
+```
+
+```{r}
+#| label: 225 Sensor Use
+sa <- read_sas(gsub("\\\\", "/", r"(\\wf00168p.oneabbott.com\data1\CDM\ADC-US-RES-22225\SE07_08_Glu\OpenClinica\Current\sa.sas7bdat)"))
+sa <- sa |> 
+      filter(!str_detect(DUYN01,regex("CHECK HERE IF NO DATA RECORDED|no_data_recorded",ignore_case = T))) |>
+      mutate(Subject = as.character(Subject)) |>
+      arrange(Subject)
+```
+
+. . .
+
+<!-- 057 Study Event 7 Site ID = RMCR, 081 Study Event 8 Site ID = DGD -->
+
+```{r}
+#| label: Summary Table
+sa |> 
+   select(Subject, DUNUM2 = DUSPID03) |> 
+   bind_rows(
+     du1 |> 
+     select(Subject,DUNUM2)
+     ) |> 
+   mutate(Study = case_when(str_starts(Subject,"57") ~ "225 SE07",
+                            str_starts(Subject,"81") ~ "225 SE08",
+                            .default = "IH105")) |> 
+   group_by(Study) |> 
+   summarise(`Number of Subjects` = n_distinct(Subject),
+             `Number of Inserted Sensors` = n_distinct(DUNUM2)) |> 
+   left_join(
+     de |> 
+     mutate(Study = case_when(str_starts(Subject,"57") ~ "225 SE07",
+                            str_starts(Subject,"81") ~ "225 SE08",
+                            .default = "IH105")) |> 
+     group_by(Study) |> 
+     summarise(`Number of Replaced Sensors` = sum(!str_detect(DEORES06,"^$|pattern")),
+             `Number of Removed Sensors` = sum(!str_detect(DEORES05,"^$|pattern"))),
+     by = ("Study")) |> 
+   gt() |> 
+   cols_align(align = "center",columns = everything()) |> 
+   tab_header(title = md("**Sensor Insertion Attempts**")) |> 
+   as_raw_html()
+```
+
+::: {.notes}
+For 225SE07, we have thirty-six subjects and the number of inserted of sensors is one hundred forty-four.
+For 225SE08, we have thirty-six subjects and the number of inserted of sensors is one hundred forty-six.
+For IH105, we have twenty-four subjects and the number of inserted of sensors is ninety six. Only one removed sensor.
+:::
+
+## Demographics and Diabetes History
+
+. . .
+
+```{r}
+#| label: Import dm
+dm <- read_sas(gsub("\\\\", "/", r"(\\wf00168p.oneabbott.com\data1\CDM\ADC-US-RES-16157_InHouse Sensor\OpenClinicaExtract\Current\105\dm.sas7bdat)")) |>
+  select(Subject,SEX,AGE,ETHNIC,RACE) |>
+  bind_rows(
+    read_sas(gsub("\\\\", "/", r"(\\wf00168p.oneabbott.com\data1\CDM\ADC-US-RES-22225\SE07_08_Glu\OpenClinica\Current\dm.sas7bdat)")) |>
+  filter(!str_detect(DMYN,regex("CHECK HERE IF NO DATA RECORDED|no_data_recorded",ignore_case = T))) |>
+   select(Subject,SEX,AGE,ETHNIC,RACE)
+  )
+```
+
+```{r}
+#| label: Import mh
+mh <- read_sas(gsub("\\\\", "/", r"(\\wf00168p.oneabbott.com\data1\CDM\ADC-US-RES-16157_InHouse Sensor\OpenClinicaExtract\Current\105\mh.sas7bdat)")) |>
+   select(Subject,MHORRES2,MHORRES3) |>
+   bind_rows(
+     read_sas(gsub("\\\\", "/", r"(\\wf00168p.oneabbott.com\data1\CDM\ADC-US-RES-22225\SE07_08_Glu\OpenClinica\Current\mh1.sas7bdat)")) |>
+    filter(!str_detect(MHYN02,regex("CHECK HERE IF NO DATA RECORDED|no_data_recorded",ignore_case = T))) |>
+    select(Subject,MHORRES2 = MHYN01,MHORRES3 = MHORES01)
+   )
+```
+
+```{r}
+#| label: dm function
+my_fun <- function(group_var){
+    dm %>% 
+       full_join(mh %>% 
+                    select(Subject,MHORRES2,MHORRES3),by = c("Subject")) %>% 
+  transmute(SEX = factor(SEX,levels = c("Female","Male")),
+            ETHNIC = factor(ETHNIC,levels = c("Hispanic or Latino","Not Hispanic or Latino")),
+            RACE = factor(RACE,levels = c("American Indian or Alaska Native","Asian","Black or African American","Native Hawaiian or Pacific Islander","White","Other")),
+            MHORRES3 = case_when(MHORRES2 == "No" ~ "Other: Non-Diabetic",
+                                 MHORRES2 == "Yes" & MHORRES3 %in% c("Type 2","Type2") ~ "Type 2",
+                                 .default =  "Type 1"),
+             MHORRES3 = factor(MHORRES3,levels = c("Type 1","Type 2","Other: Non-Diabetic")),
+             Study = case_when(str_starts(Subject,"57") ~ "225 SE07",
+                             str_starts(Subject,"81") ~ "225 SE08",
+                             .default = "IH105")
+          ) %>% 
+    tabyl({{group_var}},Study) %>% 
+    as_tibble() %>% 
+    rename(Charateristic = {{group_var}}) |> 
+    adorn_percentages("col") |>
+    adorn_pct_formatting(rounding = "half up", digits = 1) |>
+    adorn_ns() |>
+    as_tibble() 
+}
+```
+
+:::: {.columns}
+
+::: {.column width="50%"}
+```{r}
+#| warning: false
+c("SEX","ETHNIC") %>% 
+          map_dfr(~ my_fun(.data[[.x]])) %>% 
+          gt() %>%
+          cols_align(align = "center",columns = everything()) %>%
+          tab_header(title = md("**Subject Demographics**")) %>%
+          tab_row_group(label = "Ethnicity",rows = c(3:4)) %>%
+          tab_row_group(label = "Sex",rows = c(1:2)) %>% 
+          as_raw_html()
+```
+:::
+
+::: {.column width="50%"}
+```{r}
+#| warning: false
+c("RACE") %>% 
+          map_dfr(~ my_fun(.data[[.x]])) %>% 
+          gt() %>%
+          cols_align(align = "center",columns = everything()) %>%
+          tab_header(title = md("**Subject Demographics**")) %>%
+          tab_row_group(label = "Race",rows = c(1:6)) %>%
+          as_raw_html()
+```
+:::
+
+::::
+
+::: {.notes}
+For SE07, twenty-six of subjects were male and all subjects were white.
+For SE08, twenty-two of subjects were female and ninety-five percent of subjects were white.
+For 105, fourteen of subjects were female and fifty percent of subjects were Asian.
+:::
+
+## Demographics and Diabetes History
+
+. . .
+
+```{r}
+#| warning: false
+c("MHORRES3") %>% 
+          map_dfr(~ my_fun(.data[[.x]])) %>% 
+          gt() %>%
+          cols_align(align = "center",columns = everything()) %>%
+          tab_header(title = md("**Diabetes History**")) %>%
+          tab_row_group(label = "Type of Diabetes",rows = c(1:3)) %>%
+          as_raw_html()
+```
+
+::: {.notes}
+For SE07, seventy-five percent of subjects had type 1 diabetes.
+For SE08, fifty-five percent of subjects had type 2 diabetes.
+For 105,  One subject had Type 2 diabetes.
+:::
+
+```{r}
+#| label: Import Ap.rds
+Ap <- readRDS(gsub("\\\\", "/", r"(\\oneabbott.com\dept\ADC\Technical_OPS\Clinical_Affairs\Clinical Study Files\Apollo\ADC-US-RES-22225 Multi-Analyte Studies\Statistics\Programs\SE07_SE08\Data\Ap.rds)")) |> 
+    bind_rows(
+    readRDS(gsub("\\\\", "/", r"(\\oneabbott.com\dept\ADC\Technical_OPS\Clinical_Affairs\Clinical Study Files\Sensor Systems\ADC-US-RES-16157_InHouse Sensor\Statistics\Programs\SE105\AL\Data\Ap.rds)"))
+  ) |> 
+   mutate(Data = case_when(str_starts(`Subject ID`,"57") ~ "225 SE07",
+                           str_starts(`Subject ID`,"81") ~ "225 SE08",
+                          .default =  "IH105")) 
+```
+
+## Difference Measure
+
+. . .
+
+![](images/image-135692471.png){fig-align="center"}
+
+::: {.notes}
+Difference Measures is to calculate the bias of paired of sensor reading and reference reading.
+We have two types of reference reading, which are YSI and BG. In those three studies, the reference is BG reading.
+:::
+
+## Real Time Difference Measures Group by Study Event and Lot {.scrollable}
+
+. . .
+
+```{r}
+#| label: difference measure function
+diff_measure_fun <- function(data, reference, ...) {
+  
+diff_calculation <- list(
+                          Mean = ~ mean(.x, na.rm = T),
+                          Median = ~ median(.x, na.rm = T),
+                          SD = ~ sd(.x, na.rm = T),
+                          Min = ~ min(.x, na.rm = T),
+                          Max = ~ max(.x, na.rm = T),
+                          N = ~ sum(!is.na(.x),na.rm = T)
+                         )
+
+if (reference == TRUE) {
+data |> 
+   # Filter GM values 
+   filter(between(Gl,40,400)) |>
+   mutate(# Reference Level
+          Level = case_when(round(Reference + 0.001) < 100 ~ "<100 mg/dL",
+                            .default = ">=100 mg/dL")) |> 
+   # Overall Reference Level
+   bind_rows(
+             data |> 
+             # Filter GM values 
+             filter(between(Gl,40,400)) |>
+             mutate(Level = "Overall")  
+   ) |> 
+   pivot_longer(`Difference(mg/dL)`:`Absolute Relative Difference(%)`,names_to = "Measure") |>
+   mutate(
+          # Factor order Measure
+           Measure = fct_inorder(Measure)) |> 
+   # Difference(mg/dL) and Absolute Difference(mg/dL) for Reference Level < 100 mg/dL
+   # Relative Difference(%) and Absolute Relative Difference(%) for Reference Level >= 100 mg/dL
+   filter((Measure %in% c("Difference(mg/dL)", "Absolute Difference(mg/dL)") & 
+          Level %in% c("<100 mg/dL", "Overall")) | 
+          (Measure %in% c("Relative Difference(%)", "Absolute Relative Difference(%)") & 
+          Level %in% c(">=100 mg/dL", "Overall"))) |> 
+   # User-Defined group variables
+   group_by(...) |> 
+   group_by(Measure,.add = TRUE) |> 
+   summarise_at(.vars = "value", diff_calculation) |> 
+   gt() |>
+   cols_align(align = "center") |>
+   fmt_number(columns = Mean:Max,decimals = 1)
+  } else {
+     data |> 
+     # Filter GM values 
+     filter(between(Gl,40,400)) |> 
+     group_by(...) |> 
+     summarise(
+      across(c(`Difference(mg/dL)`:`Absolute Relative Difference(%)`), 
+              diff_calculation[1:3],.names = "{.col} {.fn}"), N = n()) |> 
+   relocate(N,.after = last_col()) |> 
+   gt()  |> 
+   cols_align(align = "center") |> 
+   tab_spanner(label = "Difference(mg/dL)",columns = c("Difference(mg/dL) Mean","Difference(mg/dL) Median","Difference(mg/dL) SD")) |> 
+   tab_spanner(label = "Abs. Difference (mg/dL)",columns = c("Absolute Difference(mg/dL) Mean","Absolute Difference(mg/dL) Median","Absolute Difference(mg/dL) SD")) |> 
+   tab_spanner(label = "Relative Difference(%)",columns = c("Relative Difference(%) Mean","Relative Difference(%) Median","Relative Difference(%) SD")) |> 
+   tab_spanner(label = "Absolute Relative Difference(%)",columns = c("Absolute Relative Difference(%) Mean","Absolute Relative Difference(%) Median","Absolute Relative Difference(%) SD")) |> 
+   fmt_number(columns = contains(c("Mean","Median")),decimals = 1) |> 
+   fmt_number(columns = contains(c("SD")),decimals = 2) |> 
+    cols_label(
+      `Difference(mg/dL) Mean` = "Mean",`Difference(mg/dL) Median` = "Median",
+      `Difference(mg/dL) SD` = "SD",
+      `Relative Difference(%) Mean` = "Mean",`Relative Difference(%) Median` = "Median",`Relative Difference(%) SD` = "SD",
+      `Absolute Difference(mg/dL) Mean` = "Mean",`Absolute Difference(mg/dL) Median` = "Median",
+      `Absolute Difference(mg/dL) SD` =  "SD",`Absolute Relative Difference(%) Mean` = "Mean",
+      `Absolute Relative Difference(%) Median` = "Median",
+      `Absolute Relative Difference(%) SD` = "SD"
+    )
+   }
+}
+```
+
+```{r}
+Ap |> 
+   mutate(Lot = str_c("Lot",str_sub(`Condition ID`,3), sep = " ")) |> 
+   diff_measure_fun(Data,Lot,reference = F) |> 
+   as_raw_html()
+```
+
+::: footer
+[Accuracy Performance](C:/Project/ADC-US-RES-22225/ADC-US-RES-22225.html)
+:::
+
+::: {.notes}
+Only real time glucose will be included in the following analysis.
+This is real-time glucose difference measures.
+For example, we have two thousand and ninety paired of data in Lot 1 from SE07 and we calculate the difference for all paired data and then we use the difference to get the statistics such as mean, median, and standard deviation.
+we can see no matter which study. Lot1 to lot5 have smaller mean bias compared to lot6.
+:::
+
+## Real Time Difference Measures Group by Lot {.scrollable}
+
+. . .
+
+```{r}
+Ap |> 
+   mutate(Lot = str_c("Lot",str_sub(`Condition ID`,3), sep = " ")) |> 
+   diff_measure_fun(Lot,reference = F) |> 
+   as_raw_html()
+```
+
+::: footer
+[Accuracy Performance](C:/Project/ADC-US-RES-22225/ADC-US-RES-22225.html)
+:::
+
+::: {.notes}
+This is overall results that group by Lot only.
+Lot1 to lot5 have smaller mean bias compared to lot6.
+:::
+
+## System Agreement Analysis
+
+. . .
+
+![](images/image-1197249212.png){fig-align="center"}
+
+::: {.notes}
+System agreement analysis is to categorize the absolute difference or absolute relative difference into four groups.
+:::
+
+## Real Time System Accuracy Results Group by Lot and Glucose Level {.scrollable}
+
+```{r}
+system_agreement_fun <- function(data, long, ...) {
+gl_breaks <- c(0,15,20,40,Inf)
+
+if (long == TRUE) {
+data |> 
+   # Filter GM values 
+   filter(between(Gl,40,400)) |>
+   mutate(Level = case_when(round(Reference + 0.001) < 70 ~ "<70 mg/dL",
+                            .default = ">=70 mg/dL")) |> 
+   # Overall 
+   bind_rows(data |> 
+             # Filter GM values 
+             filter(between(Gl,40,400)) |>
+             mutate(Level = "Overall")) |> 
+   mutate(
+          Group = case_when(round(Reference + 0.001) < 70 ~ cut(round(`Absolute Difference(mg/dL)`,0), breaks = gl_breaks,include.lowest = T),
+                            .default = cut(round(`Absolute Relative Difference(%)`,0), breaks = gl_breaks,include.lowest = T))) |> 
+   group_by(...) |> 
+   count(Level,Group,.drop = F) |> 
+   mutate(Sum = sum(n),
+          cum = case_when(row_number() %in% c(1:3) ~ cumsum(n),
+                .default = n),
+          Percent = round((cum/Sum)*100,1)) |> 
+   ungroup() |> 
+   mutate(Group = rep(c("Within +- 15 mg/dL [0.8 mmol/L]","Within +- 20 mg/dL [1.1 mmol/L]","Within +- 40 mg/dL [2.2 mmol/L]","Outside +- 40 mg/dL [2.2 mmol/L]","Within +- 15%","Within +- 20%","Within +- 40% ","Outside +- 40%","Within ± 15 mg/dL or 15%","Within ± 20 mg/dL or 20%","Within ± 40 mg/dL or 40%","Outside ± 40 mg/dL or 40%"),n()/12),
+          `N(%)` = str_c(cum,"/",Sum," ","(",Percent,"%)")) |> 
+   group_by(...) |>
+   gt() |>
+   cols_align(align = "center") |>
+   cols_hide(columns = c(n:Percent))
+ } else {
+   data |> 
+   # Filter GM values 
+   filter(between(Gl,40,400)) |>
+   mutate(Level = case_when(round(Reference + 0.001) < 70 ~ "<70 mg/dL",
+                            .default = ">=70 mg/dL")) |> 
+   # Overall 
+   bind_rows(data |> 
+             # Filter GM values 
+             filter(between(Gl,40,400)) |>
+             mutate(Level = "Overall")) |> 
+   mutate(
+          Group = case_when(round(Reference + 0.001) < 70 ~ cut(round(`Absolute Difference(mg/dL)`,0), breaks = gl_breaks,include.lowest = T),
+                            .default = cut(round(`Absolute Relative Difference(%)`,0), breaks = gl_breaks,include.lowest = T))) |> 
+   group_by(...) |> 
+   count(Level,Group,.drop = F) |> 
+   group_by(Level,.add = T) |> 
+   mutate(Sum = sum(n),
+          cum = case_when(row_number() %in% c(1:3) ~ cumsum(n),
+                .default = n),
+          Percent = round((cum/Sum)*100,1)) |> 
+   ungroup() |> 
+   mutate(Group = rep(c("Within +-15% / +-15mg/dL [0.8 mmol/L]","Within +-20% / +-20mg/dL [1.1 mmol/L]","Within +-40% / +-40mg/dL [2.2 mmol/L]","Outside +-40% / +-40mg/dL[2.2 mmol/L]"),n()/4),
+          `N(%)` = str_c(cum,"/",Sum," ","(",Percent,"%)")) |> 
+   pivot_wider(id_cols = -c(n:Percent),names_from = Group,values_from = `N(%)`) |> 
+   group_by(...) |>
+   gt() |>
+   cols_align(align = "center") |> 
+   cols_width(everything() ~ px(200))
+ }
+}
+```
+
+```{r}
+Ap |> 
+   mutate(Lot = str_c("Lot",str_sub(`Condition ID`,3), sep = " ")) |> 
+   system_agreement_fun(Lot,long = F) |> 
+   as_raw_html()
+```
+
+::: footer
+[Accuracy Performance](C:/Project/ADC-US-RES-22225/ADC-US-RES-22225.html)
+:::
+
+::: {.notes}
+This is the overall result that group by Lot only.
+Let us see overall performance. Within 20/20 bias or relative bias, Lot one has a better performance compared to other lots.
+:::
+
+## Real Time System Accuracy Plot
+
+. . .
+
+```{r}
+ggplot(Ap) +
+  geom_point(aes(x = Reference, y = `Difference(mg/dL)`, color = str_sub(`Condition ID`,3), shape = str_sub(`Condition ID`,3))) +
+  labs(x = "BG Reference (mg/dL)", y = "Bias (mg/dL)", color = "Lot", shape = "Lot") +
+  theme_bw() +
+  theme(panel.grid.major.y = element_blank(),panel.grid.minor.y = element_blank(),legend.position = "bottom",plot.title = element_text(hjust = 0.5))
+```
+
+::: footer
+[Accuracy Performance](C:/Project/ADC-US-RES-22225/ADC-US-RES-22225.html)
+:::
+
+::: {.notes}
+This is system accuracy plot. The x axis is BG reference and the y axis is bias or difference.
+Lot 6 has higher bias.
+:::
+
+```{r}
+#| label: Import UUU.rds
+UUU <- readRDS(gsub("\\\\", "/", r"(\\oneabbott.com\dept\ADC\Technical_OPS\Clinical_Affairs\Clinical Study Files\Apollo\ADC-US-RES-22225 Multi-Analyte Studies\Statistics\Programs\SE07_SE08\Data\UUU.rds)")) |> 
+  bind_rows(
+    readRDS(gsub("\\\\", "/", r"(\\oneabbott.com\dept\ADC\Technical_OPS\Clinical_Affairs\Clinical Study Files\Sensor Systems\ADC-US-RES-16157_InHouse Sensor\Statistics\Programs\SE105\AL\Data\UUU.rds)"))
+  ) 
+```
+
+```{r}
+#| label: Import freestyle.rds
+freestyle <- readRDS(gsub("\\\\", "/", r"(\\oneabbott.com\dept\ADC\Technical_OPS\Clinical_Affairs\Clinical Study Files\Apollo\ADC-US-RES-22225 Multi-Analyte Studies\Statistics\Programs\SE07_SE08\Data\freestyle.rds)")) |> 
+  bind_rows(
+    readRDS(gsub("\\\\", "/", r"(\\oneabbott.com\dept\ADC\Technical_OPS\Clinical_Affairs\Clinical Study Files\Sensor Systems\ADC-US-RES-16157_InHouse Sensor\Statistics\Programs\SE105\AL\Data\freestyle.rds)"))
+  )
+```
+
+## Profile Plot
+
+. . .
+
+```{r}
+#| label: Profile plot function
+breakdown_type_plot <- function(Id, type, ...) {
+  highchart() %>%
+  # Add title
+  {if (type == "904") hc_title(.,text = str_c("Subject = ",Id, " Real-Time Glucose")) 
+   else if (type == "905") hc_title(.,text = str_c("Subject = ",Id, " Historic Glucose")) 
+   else hc_title(.,text = str_c("Subject = ",Id, " Current Glucose"))} %>% 
+  # hc_title(text = str_c("Subject = ",Id)) %>% 
+  # continuous Sensor Data
+  hc_add_series(
+    # name = "Sensor Reading",
+    data = UUU %>%
+           filter(`Subject ID` == Id, Type == type) %>% 
+           # 904 is Real-time glucose 906 is current glucose
+           mutate(Type = case_when(Type == "906" ~ "Current Glucose",
+                                   Type == "904" ~ "Real-Time Glucose",
+                                   .default = "Historic Glucose")),
+    type = "line",
+    hcaes(x = datetime_to_timestamp(`Date Time`), y = Gl, group = `Condition ID`)) %>%
+  # BG data 
+   hc_add_series(
+    name = "BG Reference",
+    data = freestyle %>%
+           filter(`Subject ID` == Id),
+    type = "scatter",
+    color = "#FF0000",
+    hcaes(x = datetime_to_timestamp(`BG Date Time`), y = Reference)) %>% 
+    # Add X label
+    hc_xAxis(title = list(text = "Date Time"),
+             type = "datetime", 
+             dateTimeLabelFormats = list(day = '%d %b %y')) %>%
+    # Add Y axis
+    hc_yAxis(title = list(text = "Glucose(mg/dl)")) %>%
+    # Change the size of marker
+    hc_plotOptions(scatter = list(
+                            marker = list(radius = 1.9, symbol = "circle"))) %>% 
+    # Change the format of point
+    hc_tooltip(pointFormat = '{point.x: %Y-%m-%d %H:%M:%S} {point.y:.1f} ')  %>% 
+    # Add zoom in function
+    hc_chart(zoomType = "xy") %>% 
+    # Add navigator
+    hc_navigator(enabled = TRUE)
+}
+```
+
+::: {.panel-tabset}
+
+## Subject 810030 
+```{r}
+breakdown_type_plot(Id = "810030", type = "904")
+```
+
+## Subject 2169
+```{r}
+breakdown_type_plot(Id = "2169", type = "904")
+```
+:::
+
+::: footer
+[22225 Profile Plot](C:/Project/ADC-US-RES-22225/ADC-US-RES-22225 Real-Time Glucose Profile Plot.html)
+[IH105 Profile Plot](C:/Project/ADC-US-RES-16157-Sub-Study-105/ADC-US-RES-16157-Sub-Study-105 Real-Time Profile Plot.html)
+:::
+
+::: {.notes}
+From profile plots, we can find why lot6 has higher bias. Take Subject 2169 as an example, The BG reference did not match the pattern of sensor data.
+:::
