@@ -2,6 +2,7 @@
 title: "ADC-US-RES-22225 & ADC-US-RES-16157 Sub Study 105"
 author: "Alvin, Lin"
 date: "`r Sys.Date()`"
+date-format: medium
 format:
   revealjs:
     incremental: true
